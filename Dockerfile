@@ -11,3 +11,5 @@ COPY . .
 
 # Set working directory to backend for runtime
 WORKDIR /app/backend
+
+CMD ["python", "start.py"]
