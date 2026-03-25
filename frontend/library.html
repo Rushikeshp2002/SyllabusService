@@ -1,0 +1,1357 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SyllabusService — Library</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Noto+Sans+Devanagari:wght@400;600;700&family=Noto+Sans+Tamil:wght@400;600;700&family=Noto+Sans+Telugu:wght@400;600;700&family=Noto+Sans+Bengali:wght@400;600;700&family=Noto+Sans+Gujarati:wght@400;600;700&family=Noto+Sans+Kannada:wght@400;600;700&family=Noto+Sans+Malayalam:wght@400;600;700&family=Noto+Serif+Devanagari:wght@400;700&family=Tiro+Devanagari+Hindi&family=Mukta:wght@400;700&family=Noto+Sans+Gurmukhi:wght@400;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/style.css" />
+    <style>
+        .library-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+            gap: 16px;
+            padding: 0 16px 32px;
+        }
+
+        .subject-card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            transition: border-color 0.2s;
+        }
+
+        .subject-card:hover {
+            border-color: var(--accent);
+        }
+
+        .subject-card h3 {
+            margin: 0 0 4px;
+            font-size: 1.05rem;
+            color: var(--text);
+        }
+
+        .subject-meta {
+            font-size: 0.78rem;
+            color: var(--muted);
+            margin-bottom: 12px;
+        }
+
+        .stat-row {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 14px;
+        }
+
+        .stat-chip {
+            font-size: 0.72rem;
+            padding: 3px 10px;
+            border-radius: 12px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--muted);
+        }
+
+        .stat-chip strong {
+            color: var(--text);
+            margin-right: 3px;
+        }
+
+        .card-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .card-actions .btn {
+            flex: 1;
+            padding: 8px 12px;
+            font-size: 0.78rem;
+            border-radius: 8px;
+            cursor: pointer;
+            text-align: center;
+        }
+
+        .btn-view {
+            background: rgba(99, 102, 241, 0.12);
+            color: #818cf8;
+            border: 1px solid rgba(99, 102, 241, 0.25);
+        }
+
+        .btn-view:hover {
+            background: rgba(99, 102, 241, 0.2);
+        }
+
+        .btn-delete {
+            background: rgba(239, 68, 68, 0.1);
+            color: #f87171;
+            border: 1px solid rgba(239, 68, 68, 0.25);
+        }
+
+        .btn-delete:hover {
+            background: rgba(239, 68, 68, 0.2);
+        }
+
+        .group-header {
+            padding: 8px 16px;
+            font-size: 0.82rem;
+            font-weight: 700;
+            color: var(--accent);
+            margin-top: 12px;
+            margin-bottom: 4px;
+        }
+
+        /* Detail modal overlay */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.75);
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            max-width: 700px;
+            width: 100%;
+            max-height: 80vh;
+            overflow-y: auto;
+            padding: 24px;
+        }
+
+        .modal-content h2 {
+            margin: 0 0 16px;
+            font-size: 1.1rem;
+        }
+
+        .tree-chapter {
+            margin-bottom: 12px;
+            border-left: 3px solid var(--accent);
+            padding-left: 12px;
+        }
+
+        .tree-chapter summary {
+            font-weight: 600;
+            font-size: 0.88rem;
+            color: var(--text);
+            cursor: pointer;
+            padding: 4px 0;
+        }
+
+        .tree-topic {
+            margin-left: 12px;
+            font-size: 0.82rem;
+            color: var(--muted);
+            padding: 2px 0;
+        }
+
+        .tree-subtopic {
+            margin-left: 24px;
+            font-size: 0.78rem;
+            color: var(--muted);
+            padding: 1px 0;
+        }
+
+        .tree-qset {
+            margin-left: 12px;
+            margin-top: 6px;
+        }
+
+        .tree-qset summary {
+            font-size: 0.78rem;
+            color: #8b5cf6;
+            cursor: pointer;
+            padding: 3px 0;
+            font-weight: 600;
+        }
+
+        .tree-question {
+            margin-left: 8px;
+            padding: 6px 10px;
+            border-left: 2px solid var(--border);
+            margin-bottom: 4px;
+            font-size: 0.78rem;
+        }
+
+        .tree-question .q-header {
+            display: flex;
+            align-items: baseline;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .tree-question .q-num {
+            font-weight: 700;
+            color: var(--muted);
+        }
+
+        .tree-question .q-text {
+            color: var(--text);
+        }
+
+        .tree-question .q-badge {
+            font-size: 0.65rem;
+            padding: 1px 6px;
+            border-radius: 4px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--muted);
+        }
+
+        .tree-question .q-star {
+            color: #f59e0b;
+        }
+
+        .tree-question .q-options {
+            margin: 3px 0 3px 18px;
+            font-size: 0.75rem;
+            color: var(--muted);
+        }
+
+        .tree-question .q-options span {
+            margin-right: 10px;
+        }
+
+        .tree-question .q-answer {
+            margin: 3px 0 0 18px;
+            font-size: 0.72rem;
+            color: #10b981;
+        }
+
+        .tree-question .q-img-desc {
+            margin: 3px 0 0 18px;
+            font-size: 0.72rem;
+            color: #8b5cf6;
+            font-style: italic;
+        }
+
+        .tree-question .q-svg-preview {
+            margin: 4px 0 4px 18px;
+            background: #fff;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 6px;
+            max-width: 340px;
+        }
+
+        .tree-question .q-svg-preview svg {
+            width: 100%;
+            height: auto;
+        }
+
+        .tree-question .q-sub {
+            margin-left: 18px;
+            padding: 3px 0 3px 8px;
+            border-left: 1px solid var(--border);
+            font-size: 0.75rem;
+            color: var(--muted);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 80px 20px;
+            color: var(--muted);
+        }
+
+        .empty-state .icon {
+            font-size: 3rem;
+            margin-bottom: 12px;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        /* Confirm delete modal */
+        .confirm-modal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 200;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .confirm-modal.active {
+            display: flex;
+        }
+
+        .confirm-box {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            max-width: 400px;
+            text-align: center;
+        }
+
+        .confirm-box h3 {
+            margin: 0 0 8px;
+            color: #f87171;
+        }
+
+        .confirm-box p {
+            color: var(--muted);
+            font-size: 0.85rem;
+            margin-bottom: 16px;
+        }
+
+        .confirm-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+
+        .icon-picker-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 200;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .icon-picker-overlay.active {
+            display: flex;
+        }
+
+        .icon-picker-content {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            max-width: 600px;
+            width: 100%;
+            max-height: 85vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .icon-picker-header {
+            padding: 20px 20px 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .icon-picker-header h3 {
+            margin: 0 0 4px;
+            font-size: 1rem;
+        }
+
+        .icon-picker-header .current-icon {
+            font-size: 0.78rem;
+            color: var(--muted);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .icon-picker-header .current-icon img {
+            width: 24px;
+            height: 24px;
+            filter: brightness(0) invert(0.7);
+        }
+
+        .icon-picker-search {
+            width: 100%;
+            padding: 10px 14px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text);
+            font-size: 0.85rem;
+            outline: none;
+        }
+
+        .icon-picker-search:focus {
+            border-color: var(--accent);
+        }
+
+        .icon-picker-tabs {
+            display: flex;
+            gap: 6px;
+            padding: 10px 20px 0;
+            flex-wrap: wrap;
+        }
+
+        .icon-tab {
+            font-size: 0.68rem;
+            padding: 4px 10px;
+            border-radius: 8px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--muted);
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .icon-tab:hover, .icon-tab.active {
+            background: rgba(99, 102, 241, 0.15);
+            border-color: rgba(99, 102, 241, 0.4);
+            color: #818cf8;
+        }
+
+        .icon-picker-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+            gap: 6px;
+            padding: 16px;
+            overflow-y: auto;
+            max-height: 55vh;
+            min-height: 200px;
+        }
+
+        .icon-option {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 10px 4px 6px;
+            border-radius: 10px;
+            border: 1px solid transparent;
+            cursor: pointer;
+            transition: all 0.15s;
+            gap: 4px;
+        }
+
+        .icon-option:hover {
+            background: rgba(99, 102, 241, 0.1);
+            border-color: rgba(99, 102, 241, 0.3);
+        }
+
+        .icon-option.selected {
+            background: rgba(99, 102, 241, 0.2);
+            border-color: var(--accent);
+        }
+
+        .icon-option img {
+            width: 28px;
+            height: 28px;
+            filter: brightness(0) invert(0.75) sepia(1) saturate(3) hue-rotate(210deg);
+        }
+
+        .icon-option .icon-label {
+            font-size: 0.52rem;
+            color: var(--muted);
+            text-align: center;
+            max-width: 60px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .icon-option .icon-set {
+            font-size: 0.45rem;
+            color: rgba(148, 163, 184, 0.5);
+        }
+
+        .icon-picker-status {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--muted);
+            font-size: 0.82rem;
+        }
+
+        .btn-icon {
+            background: rgba(59, 130, 246, 0.1);
+            color: #60a5fa;
+            border: 1px solid rgba(59, 130, 246, 0.25);
+        }
+
+        .btn-icon:hover {
+            background: rgba(59, 130, 246, 0.2);
+        }
+
+        /* Custom text icon section */
+        .custom-text-panel {
+            display: none;
+            padding: 16px 20px;
+            border-top: 1px solid var(--border);
+        }
+
+        .custom-text-panel.active {
+            display: block;
+        }
+
+        .custom-text-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .custom-text-row input, .custom-text-row select {
+            padding: 8px 12px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            font-size: 0.82rem;
+            outline: none;
+        }
+
+        .custom-text-row input:focus, .custom-text-row select:focus {
+            border-color: var(--accent);
+        }
+
+        .custom-text-row select {
+            min-width: 140px;
+        }
+
+        .lang-presets {
+            display: flex;
+            gap: 5px;
+            flex-wrap: wrap;
+            margin-bottom: 10px;
+        }
+
+        .lang-preset {
+            font-size: 0.65rem;
+            padding: 3px 8px;
+            border-radius: 6px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--muted);
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .lang-preset:hover, .lang-preset.active {
+            background: rgba(245, 158, 11, 0.15);
+            border-color: rgba(245, 158, 11, 0.4);
+            color: #fbbf24;
+        }
+
+        .char-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+            gap: 6px;
+            max-height: 35vh;
+            overflow-y: auto;
+        }
+
+        .char-card {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 12px 4px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            cursor: pointer;
+            transition: all 0.15s;
+            font-size: 1.4rem;
+            color: #e2e8f0;
+            min-height: 52px;
+        }
+
+        .char-card:hover {
+            background: rgba(245, 158, 11, 0.1);
+            border-color: rgba(245, 158, 11, 0.4);
+            transform: scale(1.08);
+        }
+
+        .btn-custom-toggle {
+            padding: 5px 12px;
+            font-size: 0.72rem;
+            border-radius: 8px;
+            background: rgba(245, 158, 11, 0.12);
+            color: #fbbf24;
+            border: 1px solid rgba(245, 158, 11, 0.3);
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .btn-custom-toggle:hover, .btn-custom-toggle.active {
+            background: rgba(245, 158, 11, 0.25);
+        }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <div class="logo">📚 SyllabusService</div>
+        <div class="header-actions">
+            <div class="subtitle">Inserted Subjects Library</div>
+            <a href="/" class="btn"
+                style="padding:6px 14px;font-size:0.78rem;background:var(--border);text-decoration:none;border-radius:8px;">
+                ← Upload Page
+            </a>
+        </div>
+    </header>
+
+    <div id="loading" style="text-align:center;padding:60px;">
+        <div class="spinner" style="width:36px;height:36px;border-width:3px;margin:0 auto 16px;"></div>
+        <p style="color:var(--muted)">Loading library...</p>
+    </div>
+
+    <div id="library-container" style="display:none;">
+        <div id="library-grid" class="library-grid"></div>
+    </div>
+
+    <div id="empty-state" class="empty-state" style="display:none;">
+        <div class="icon">📭</div>
+        <h2>No subjects inserted yet</h2>
+        <p style="margin-bottom:16px;">Upload a textbook PDF to get started.</p>
+        <a href="/" class="btn btn-primary" style="text-decoration:none;">Upload Textbook</a>
+    </div>
+
+    <!-- Detail modal -->
+    <div class="modal-overlay" id="detail-modal">
+        <div class="modal-content" id="detail-content">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                <h2 id="detail-title">Subject Details</h2>
+                <button class="btn" style="padding:6px 12px;font-size:0.78rem;background:var(--border);cursor:pointer;"
+                    onclick="closeDetailModal()">Close</button>
+            </div>
+            <div id="detail-tree"></div>
+        </div>
+    </div>
+
+    <!-- Confirm delete modal -->
+    <div class="confirm-modal" id="confirm-modal">
+        <div class="confirm-box">
+            <h3>Delete Subject?</h3>
+            <p id="confirm-text">This will permanently delete the subject and all its chapters, topics, subtopics, and
+                questions.</p>
+            <div class="confirm-actions">
+                <button class="btn" style="padding:8px 20px;background:var(--border);cursor:pointer;"
+                    onclick="closeConfirmModal()">Cancel</button>
+                <button class="btn btn-delete" id="confirm-delete-btn" style="padding:8px 20px;cursor:pointer;"
+                    onclick="confirmDelete()">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Icon picker modal -->
+    <div class="icon-picker-overlay" id="icon-picker-modal">
+        <div class="icon-picker-content">
+            <div class="icon-picker-header">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <h3 id="icon-picker-title">Select Icon</h3>
+                    <button class="btn" style="padding:6px 12px;font-size:0.78rem;background:var(--border);cursor:pointer;"
+                        onclick="closeIconPicker()">Close</button>
+                </div>
+                <div class="current-icon" id="current-icon-row">
+                    <span>Current:</span>
+                    <img id="icon-picker-current-img" src="" alt="" style="display:none;" />
+                    <span id="icon-picker-current-name">none</span>
+                </div>
+                <input type="text" class="icon-picker-search" id="icon-search"
+                    placeholder="Search 275,000+ icons (e.g. calculator, flask, atom, book...)" />
+            </div>
+            <!-- Custom text icon panel -->
+            <div class="custom-text-panel" id="custom-text-panel">
+                <div class="lang-presets" id="lang-presets"></div>
+                <div class="custom-text-row">
+                    <input type="text" id="custom-char-input" placeholder="Type any character(s)..." style="flex:1;font-size:1.1rem;" />
+                    <select id="custom-font-select"></select>
+                    <button class="btn btn-custom-toggle" onclick="previewCustomChar()" style="white-space:nowrap;">Preview</button>
+                </div>
+                <div class="char-grid" id="char-grid"></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;padding:10px 20px 0;">
+                <button class="btn btn-custom-toggle" id="toggle-custom-btn" onclick="toggleCustomPanel()">✏️ Custom Text Icon</button>
+                <div class="icon-picker-tabs" id="icon-tabs" style="flex:1;display:flex;gap:6px;flex-wrap:wrap;"></div>
+            </div>
+            <div class="icon-picker-grid" id="icon-grid">
+                <div class="icon-picker-status">Type to search across 200+ icon sets</div>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast"></div>
+
+    <script>
+        const API = 'http://localhost:8000';
+        let subjects = [];
+        let pendingDeleteId = null;
+
+        async function init() {
+            try {
+                const res = await fetch(`${API}/api/library`);
+                if (!res.ok) throw new Error(await res.text());
+                subjects = await res.json();
+
+                document.getElementById('loading').style.display = 'none';
+
+                if (subjects.length === 0) {
+                    document.getElementById('empty-state').style.display = 'block';
+                    return;
+                }
+
+                document.getElementById('library-container').style.display = 'block';
+                renderSubjects();
+            } catch (e) {
+                document.getElementById('loading').innerHTML =
+                    `<div class="banner error" style="max-width:500px;margin:0 auto;">Failed to load library: ${e.message}</div>`;
+            }
+        }
+
+        function renderSubjects() {
+            const grid = document.getElementById('library-grid');
+            grid.innerHTML = '';
+
+            // Group by board → grade
+            const groups = {};
+            subjects.forEach(s => {
+                const key = `${s.board_name} — ${s.grade_name}`;
+                if (!groups[key]) groups[key] = [];
+                groups[key].push(s);
+            });
+
+            Object.entries(groups).forEach(([groupName, items]) => {
+                const header = document.createElement('div');
+                header.className = 'group-header';
+                header.textContent = groupName;
+                header.style.gridColumn = '1 / -1';
+                grid.appendChild(header);
+
+                items.forEach(s => {
+                    const card = document.createElement('div');
+                    card.className = 'subject-card';
+
+                    const created = new Date(s.created_at).toLocaleDateString('en-IN', {
+                        day: 'numeric', month: 'short', year: 'numeric'
+                    });
+
+                    card.innerHTML = `
+                        <h3>${escHtml(s.name)}</h3>
+                        <div class="subject-meta">
+                            ${escHtml(s.stream_name)} stream &middot; ${escHtml(s.medium || 'English')} medium &middot; Added ${created}
+                        </div>
+                        <div class="stat-row">
+                            <span class="stat-chip"><strong>${s.chapter_count || 0}</strong> Chapters</span>
+                            <span class="stat-chip"><strong>${s.topic_count || 0}</strong> Topics</span>
+                            <span class="stat-chip"><strong>${s.subtopic_count || 0}</strong> Subtopics</span>
+                            ${s.question_count > 0 ? `<span class="stat-chip"><strong>${s.question_count}</strong> Questions</span>` : ''}
+                        </div>
+                        <div class="card-actions">
+                            <button class="btn btn-icon" onclick="openIconPicker('${s.id}', '${escHtml(s.name)}', '${escHtml(s.icon_name || '')}')">🎨 Icon</button>
+                            <button class="btn btn-view" onclick="viewSubject('${s.id}', '${escHtml(s.name)}')">View</button>
+                            <button class="btn btn-delete" onclick="promptDelete('${s.id}', '${escHtml(s.name)}')">Delete</button>
+                        </div>
+                    `;
+                    grid.appendChild(card);
+                });
+            });
+        }
+
+        // ── View detail modal ────────────────────────────────────────────────────────
+        async function viewSubject(subjectId, subjectName) {
+            const modal = document.getElementById('detail-modal');
+            const tree = document.getElementById('detail-tree');
+            document.getElementById('detail-title').textContent = subjectName;
+            tree.innerHTML = '<div style="text-align:center;padding:20px;"><div class="spinner" style="width:24px;height:24px;border-width:2px;margin:0 auto 8px;"></div><p style="color:var(--muted);font-size:0.8rem;">Loading...</p></div>';
+            modal.classList.add('active');
+
+            try {
+                const res = await fetch(`${API}/api/library/${subjectId}`);
+                if (!res.ok) throw new Error(await res.text());
+                const data = await res.json();
+                renderDetailTree(data, tree);
+            } catch (e) {
+                tree.innerHTML = `<div class="banner error">${e.message}</div>`;
+            }
+        }
+
+        function renderDetailTree(data, container) {
+            container.innerHTML = '';
+
+            data.chapters.forEach(ch => {
+                const details = document.createElement('details');
+                details.className = 'tree-chapter';
+                details.open = data.chapters.length <= 5;
+
+                const summary = document.createElement('summary');
+                const topicCount = (ch.topics || []).length;
+                const qSetCount = (ch.question_sets || []).length;
+                summary.innerHTML = `Ch.${ch.chapter_number}: ${escHtml(ch.name)} <span style="color:var(--muted);font-size:0.75rem;">(${topicCount} topics${qSetCount > 0 ? `, ${qSetCount} Q-sets` : ''})</span>`;
+                details.appendChild(summary);
+
+                // Content preview for descriptive subjects
+                if (ch.content) {
+                    const contentDiv = document.createElement('div');
+                    contentDiv.style.cssText = 'margin:4px 0 8px 4px;font-size:0.76rem;color:var(--muted);max-height:80px;overflow:hidden;border-left:2px solid var(--border);padding-left:8px;';
+                    contentDiv.textContent = ch.content.substring(0, 300) + (ch.content.length > 300 ? '...' : '');
+                    details.appendChild(contentDiv);
+                }
+
+                // Topics → Subtopics
+                (ch.topics || []).forEach(t => {
+                    const tDiv = document.createElement('div');
+                    tDiv.className = 'tree-topic';
+                    const subCount = (t.subtopics || []).length;
+                    tDiv.innerHTML = `<strong>${escHtml(t.name)}</strong>${subCount > 0 ? ` <span style="font-size:0.72rem;">(${subCount} subtopics)</span>` : ''}`;
+                    details.appendChild(tDiv);
+
+                    (t.subtopics || []).forEach(st => {
+                        const stDiv = document.createElement('div');
+                        stDiv.className = 'tree-subtopic';
+                        stDiv.textContent = `• ${st.name}`;
+                        details.appendChild(stDiv);
+                    });
+                });
+
+                // Question sets with full question details
+                (ch.question_sets || []).forEach(qs => {
+                    const qsDetails = document.createElement('details');
+                    qsDetails.className = 'tree-qset';
+
+                    const qsSummary = document.createElement('summary');
+                    const setLabel = qs.set_type === 'problem_set'
+                        ? '<span style="background:#ef4444;color:#fff;font-size:0.6rem;padding:1px 5px;border-radius:6px;margin-left:4px;">Problem</span>'
+                        : '<span style="background:#3b82f6;color:#fff;font-size:0.6rem;padding:1px 5px;border-radius:6px;margin-left:4px;">Practice</span>';
+                    qsSummary.innerHTML = `📝 ${escHtml(qs.name)} ${setLabel} — ${(qs.questions || []).length} questions`;
+                    qsDetails.appendChild(qsSummary);
+
+                    (qs.questions || []).forEach(q => {
+                        const qDiv = document.createElement('div');
+                        qDiv.className = 'tree-question';
+
+                        // Header: number, text, type badge, difficulty
+                        const typeInfo = formatQuestionType(q.question_type);
+                        let html = '<div class="q-header">';
+                        html += `<span class="q-num">${escHtml(q.question_number)}.</span>`;
+                        html += `<span class="q-text">${escHtml(q.question_text)}</span>`;
+                        html += `<span class="q-badge" style="background:${typeInfo.bg};color:${typeInfo.fg};border-color:${typeInfo.bg};">${typeInfo.label}</span>`;
+                        if (q.difficulty_marker) html += ' <span class="q-star">★</span>';
+                        if (q.has_image) html += ' <span style="color:#8b5cf6;font-size:0.7rem;">🖼️</span>';
+                        html += '</div>';
+
+                        // MCQ options (only for actual MCQ questions)
+                        if (q.question_type === 'mcq' && q.options && q.options.length > 0) {
+                            html += '<div class="q-options">';
+                            q.options.forEach(o => {
+                                html += `<span>(${escHtml(o.label)}) ${escHtml(o.text)}</span>`;
+                            });
+                            html += '</div>';
+                        }
+
+                        // Answer
+                        if (q.answer) {
+                            html += `<div class="q-answer"><strong>Ans:</strong> ${escHtml(q.answer)}</div>`;
+                        }
+
+                        // Sub-questions — show actual question text and answer
+                        if (q.sub_questions && q.sub_questions.length > 0) {
+                            q.sub_questions.forEach(sq => {
+                                const sqText = sq.question_text || sq.text || '';
+                                const sqNum = sq.question_number || sq.number || '';
+                                const sqAnswer = sq.answer || '';
+                                if (!sqText && !sqAnswer) return; // skip completely empty sub-questions
+                                let subHtml = `<div class="q-sub"><strong>${escHtml(sqNum)}.</strong> ${escHtml(sqText)}`;
+                                if (sqAnswer) subHtml += ` <span style="color:#10b981;font-size:0.7rem;"><strong>Ans:</strong> ${escHtml(sqAnswer)}</span>`;
+                                subHtml += '</div>';
+                                html += subHtml;
+                            });
+                        }
+
+                        // Image description
+                        if (q.image_description) {
+                            html += `<div class="q-img-desc">🖼️ ${escHtml(q.image_description)}</div>`;
+                        }
+
+                        qDiv.innerHTML = html;
+
+                        // SVG preview (inserted as DOM to safely render)
+                        if (q.image_svg) {
+                            const svgBox = document.createElement('div');
+                            svgBox.className = 'q-svg-preview';
+                            svgBox.innerHTML = q.image_svg;
+                            qDiv.appendChild(svgBox);
+                        }
+
+                        qsDetails.appendChild(qDiv);
+                    });
+
+                    details.appendChild(qsDetails);
+                });
+
+                container.appendChild(details);
+            });
+        }
+
+        function closeDetailModal() {
+            document.getElementById('detail-modal').classList.remove('active');
+        }
+
+        // ── Delete flow ──────────────────────────────────────────────────────────────
+        function promptDelete(subjectId, subjectName) {
+            pendingDeleteId = subjectId;
+            document.getElementById('confirm-text').textContent =
+                `Delete "${subjectName}" and all its chapters, topics, subtopics, and questions? This cannot be undone.`;
+            document.getElementById('confirm-modal').classList.add('active');
+        }
+
+        function closeConfirmModal() {
+            document.getElementById('confirm-modal').classList.remove('active');
+            pendingDeleteId = null;
+        }
+
+        async function confirmDelete() {
+            if (!pendingDeleteId) return;
+            const btn = document.getElementById('confirm-delete-btn');
+            btn.disabled = true;
+            btn.textContent = 'Deleting...';
+
+            try {
+                const res = await fetch(`${API}/api/library/${pendingDeleteId}`, { method: 'DELETE' });
+                if (!res.ok) throw new Error(await res.text());
+                const result = await res.json();
+
+                showToast(`Deleted "${result.subject_name}" — ${result.deleted.chapters} chapters, ${result.deleted.questions} questions`, 'success');
+                closeConfirmModal();
+
+                // Refresh
+                subjects = subjects.filter(s => s.id !== pendingDeleteId);
+                if (subjects.length === 0) {
+                    document.getElementById('library-container').style.display = 'none';
+                    document.getElementById('empty-state').style.display = 'block';
+                } else {
+                    renderSubjects();
+                }
+            } catch (e) {
+                showToast('Delete failed: ' + e.message, 'error');
+            }
+
+            btn.disabled = false;
+            btn.textContent = 'Delete';
+        }
+
+        // ── Helpers ──────────────────────────────────────────────────────────────────
+        const TYPE_MAP = {
+            mcq: { label: '📋 MCQ', bg: 'rgba(59,130,246,0.15)', fg: '#60a5fa' },
+            fill_blank: { label: '✏️ Fill Blank', bg: 'rgba(245,158,11,0.15)', fg: '#fbbf24' },
+            solve: { label: '🧮 Solve', bg: 'rgba(16,185,129,0.15)', fg: '#34d399' },
+            word_problem: { label: '📖 Word Problem', bg: 'rgba(139,92,246,0.15)', fg: '#a78bfa' },
+            true_false: { label: '✅ True/False', bg: 'rgba(6,182,212,0.15)', fg: '#22d3ee' },
+            match: { label: '🔗 Match', bg: 'rgba(236,72,153,0.15)', fg: '#f472b6' },
+            short_answer: { label: '💬 Short Ans', bg: 'rgba(100,116,139,0.15)', fg: '#94a3b8' },
+            draw: { label: '🎨 Draw', bg: 'rgba(249,115,22,0.15)', fg: '#fb923c' },
+            complete_table: { label: '📊 Table', bg: 'rgba(168,85,247,0.15)', fg: '#c084fc' },
+            complete_activity: { label: '📝 Activity', bg: 'rgba(14,165,233,0.15)', fg: '#38bdf8' },
+        };
+
+        function formatQuestionType(type) {
+            return TYPE_MAP[type] || { label: type || '—', bg: 'var(--surface)', fg: 'var(--muted)' };
+        }
+        function escHtml(str) {
+            return String(str || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/'/g, '&#39;');
+        }
+
+        function showToast(msg, type = 'success') {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.className = `show ${type}`;
+            setTimeout(() => t.className = '', 3500);
+        }
+
+        // Close modals on overlay click
+        document.getElementById('detail-modal').addEventListener('click', e => {
+            if (e.target === e.currentTarget) closeDetailModal();
+        });
+        document.getElementById('confirm-modal').addEventListener('click', e => {
+            if (e.target === e.currentTarget) closeConfirmModal();
+        });
+
+        init();
+
+        // ── Iconify-powered Icon Picker ──────────────────────────────────────────────
+        const ICONIFY_API = 'https://api.iconify.design';
+        const POPULAR_SETS = [
+            // ── Mega sets (5000+) ──
+            { prefix: 'mdi', label: 'Material (7K+)' },
+            { prefix: 'tabler', label: 'Tabler (5K+)' },
+            { prefix: 'ph', label: 'Phosphor (7K+)' },
+            { prefix: 'icon-park-outline', label: 'IconPark (2K+)' },
+            { prefix: 'fluent', label: 'Fluent (4K+)' },
+            { prefix: 'carbon', label: 'Carbon (2K+)' },
+            { prefix: 'solar', label: 'Solar (7K+)' },
+            // ── Popular mid-size ──
+            { prefix: 'lucide', label: 'Lucide (1.5K)' },
+            { prefix: 'heroicons', label: 'Hero' },
+            { prefix: 'ri', label: 'Remix (2K+)' },
+            { prefix: 'ion', label: 'Ionicons' },
+            { prefix: 'mingcute', label: 'Mingcute (2K+)' },
+            { prefix: 'iconamoon', label: 'Iconamoon' },
+            { prefix: 'majesticons', label: 'Majesticons' },
+            // ── Specialized ──
+            { prefix: 'game-icons', label: 'Game (4K+)' },
+            { prefix: 'ant-design', label: 'Ant Design' },
+            { prefix: 'octicon', label: 'Octicons' },
+            { prefix: 'clarity', label: 'Clarity' },
+            { prefix: 'bi', label: 'Bootstrap' },
+            { prefix: 'gridicons', label: 'Gridicons' },
+            { prefix: 'eos-icons', label: 'EOS' },
+            { prefix: 'raphael', label: 'Raphael' },
+            { prefix: 'simple-icons', label: 'Brands (2K+)' },
+            { prefix: 'noto', label: 'Noto Emoji (3K+)' },
+            { prefix: 'twemoji', label: 'Twemoji (3.6K)' },
+        ];
+
+        let iconPickerSubjectId = null;
+        let iconPickerCurrentIcon = '';
+        let searchTimer = null;
+
+        function buildIconUrl(fullName) {
+            const [prefix, name] = fullName.split(':');
+            return `${ICONIFY_API}/${prefix}/${name}.svg`;
+        }
+
+        function openIconPicker(subjectId, subjectName, currentIcon) {
+            iconPickerSubjectId = subjectId;
+            iconPickerCurrentIcon = currentIcon || '';
+            document.getElementById('icon-picker-title').textContent = `Icon — ${subjectName}`;
+            document.getElementById('icon-picker-current-name').textContent = currentIcon || 'none';
+
+            const curImg = document.getElementById('icon-picker-current-img');
+            if (currentIcon && currentIcon.includes(':')) {
+                curImg.src = buildIconUrl(currentIcon);
+                curImg.style.display = 'inline';
+            } else {
+                curImg.style.display = 'none';
+            }
+
+            document.getElementById('icon-search').value = '';
+
+            // Build tabs
+            const tabs = document.getElementById('icon-tabs');
+            tabs.innerHTML = POPULAR_SETS.map(s =>
+                `<span class="icon-tab" data-prefix="${s.prefix}" onclick="searchBySet('${s.prefix}')">${s.label}</span>`
+            ).join('');
+
+            // Show existing icon if set
+            const grid = document.getElementById('icon-grid');
+            if (currentIcon && currentIcon.includes(':')) {
+                const [prefix, name] = currentIcon.split(':');
+                const svgUrl = `${ICONIFY_API}/${prefix}/${name}.svg`;
+                grid.innerHTML = '';
+                const div = document.createElement('div');
+                div.className = 'icon-option selected';
+                div.title = currentIcon;
+                div.innerHTML = `<img src="${svgUrl}" alt="${name}" /><span class="icon-label">${name}</span><span class="icon-set">${prefix}</span>`;
+                div.onclick = () => selectIcon(subjectId, currentIcon, svgUrl);
+                grid.appendChild(div);
+            } else {
+                grid.innerHTML = '<div class="icon-picker-status">Search 275,000+ icons or click a set tab below</div>';
+            }
+
+            document.getElementById('icon-picker-modal').classList.add('active');
+        }
+
+        function closeIconPicker() {
+            document.getElementById('icon-picker-modal').classList.remove('active');
+            iconPickerSubjectId = null;
+        }
+
+        // Debounced search
+        document.getElementById('icon-search').addEventListener('input', function () {
+            clearTimeout(searchTimer);
+            const q = this.value.trim();
+            if (q.length < 2) {
+                document.getElementById('icon-grid').innerHTML = '<div class="icon-picker-status">Type at least 2 characters to search</div>';
+                document.querySelectorAll('.icon-tab').forEach(t => t.classList.remove('active'));
+                return;
+            }
+            document.getElementById('icon-grid').innerHTML = '<div class="icon-picker-status">Searching...</div>';
+            document.querySelectorAll('.icon-tab').forEach(t => t.classList.remove('active'));
+            searchTimer = setTimeout(() => searchIcons(q), 350);
+        });
+
+        async function searchIcons(query, prefix) {
+            try {
+                let url = `${ICONIFY_API}/search?query=${encodeURIComponent(query)}&limit=200`;
+                if (prefix) url += `&prefix=${prefix}`;
+                const res = await fetch(url);
+                if (!res.ok) throw new Error('API error');
+                const data = await res.json();
+                const icons = data.icons || [];
+                renderIconResults(icons, `${icons.length} results for "${query}"${prefix ? ` in ${prefix}` : ''}`);
+            } catch (e) {
+                document.getElementById('icon-grid').innerHTML = `<div class="icon-picker-status">Search failed: ${e.message}</div>`;
+            }
+        }
+
+        async function searchBySet(prefix) {
+            document.querySelectorAll('.icon-tab').forEach(t => {
+                t.classList.toggle('active', t.dataset.prefix === prefix);
+            });
+            document.getElementById('icon-grid').innerHTML = '<div class="icon-picker-status">Loading...</div>';
+
+            const query = document.getElementById('icon-search').value.trim();
+            if (query.length >= 2) {
+                searchIcons(query, prefix);
+            } else {
+                try {
+                    const res = await fetch(`${ICONIFY_API}/collection?prefix=${prefix}&info=true&chars=true`);
+                    if (!res.ok) throw new Error('API error');
+                    const data = await res.json();
+
+                    let iconNames = [];
+                    if (data.uncategorized) {
+                        iconNames = data.uncategorized.slice(0, 300);
+                    } else if (data.categories) {
+                        const allNames = Object.values(data.categories).flat();
+                        iconNames = allNames.slice(0, 300);
+                    }
+
+                    const total = data.info ? data.info.total : iconNames.length;
+                    const fullNames = iconNames.map(n => `${prefix}:${n}`);
+                    renderIconResults(fullNames, `Showing ${fullNames.length} of ${total} icons in ${prefix}`);
+                } catch (e) {
+                    document.getElementById('icon-grid').innerHTML = `<div class="icon-picker-status">Failed to load set: ${e.message}</div>`;
+                }
+            }
+        }
+
+        function renderIconResults(icons, statusText) {
+            const grid = document.getElementById('icon-grid');
+            if (!icons || icons.length === 0) {
+                grid.innerHTML = '<div class="icon-picker-status">No icons found. Try different keywords.</div>';
+                return;
+            }
+
+            grid.innerHTML = '';
+
+            // Status bar
+            if (statusText) {
+                const status = document.createElement('div');
+                status.style.cssText = 'grid-column: 1/-1; font-size:0.7rem; color:var(--muted); padding:0 0 4px; border-bottom:1px solid var(--border); margin-bottom:4px;';
+                status.textContent = statusText;
+                grid.appendChild(status);
+            }
+
+            icons.forEach(fullName => {
+                const [prefix, name] = fullName.split(':');
+                const svgUrl = `${ICONIFY_API}/${prefix}/${name}.svg`;
+
+                const div = document.createElement('div');
+                div.className = 'icon-option' + (fullName === iconPickerCurrentIcon ? ' selected' : '');
+                div.title = fullName;
+                div.innerHTML = `<img src="${svgUrl}" alt="${name}" loading="lazy" /><span class="icon-label">${name}</span><span class="icon-set">${prefix}</span>`;
+                div.onclick = () => selectIcon(iconPickerSubjectId, fullName, svgUrl);
+                grid.appendChild(div);
+            });
+        }
+
+        async function selectIcon(subjectId, fullName, svgUrl) {
+            try {
+                // 1. Fetch the SVG content from Iconify
+                const svgRes = await fetch(svgUrl);
+                if (!svgRes.ok) throw new Error('Failed to download SVG');
+                const svgContent = await svgRes.text();
+
+                // 2. Save both icon_name and icon_svg to backend
+                const res = await fetch(`${API}/api/library/${subjectId}/icon`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ icon_name: fullName, icon_svg: svgContent }),
+                });
+                if (!res.ok) throw new Error(await res.text());
+                const result = await res.json();
+
+                // 3. Update local state
+                iconPickerCurrentIcon = fullName;
+                const subj = subjects.find(s => s.id === subjectId);
+                if (subj) subj.icon_name = fullName;
+
+                // 4. Update modal UI
+                const curImg = document.getElementById('icon-picker-current-img');
+                curImg.src = svgUrl;
+                curImg.style.display = 'inline';
+                document.getElementById('icon-picker-current-name').textContent = fullName;
+
+                // 5. Close modal and show toast
+                closeIconPicker();
+                showToast(`✓ Icon saved: "${fullName}" for ${result.subject_name}`, 'success');
+            } catch (e) {
+                showToast('Failed to save icon: ' + e.message, 'error');
+            }
+        }
+
+        document.getElementById('icon-picker-modal').addEventListener('click', e => {
+            if (e.target === e.currentTarget) closeIconPicker();
+        });
+
+        // ── Custom Text Icon Generator ──────────────────────────────────────────────
+        const LANG_CHARSETS = {
+            'hindi': {
+                label: 'Hindi (हिन्दी)',
+                chars: 'अ आ इ ई उ ऊ ए ऐ ओ औ अं अः क ख ग घ ङ च छ ज झ ञ ट ठ ड ढ ण त थ द ध न प फ ब भ म य र ल व श ष स ह क्ष त्र ज्ञ'.split(' '),
+                fonts: ['Noto Sans Devanagari', 'Noto Serif Devanagari', 'Tiro Devanagari Hindi', 'Mukta'],
+            },
+            'marathi': {
+                label: 'Marathi (मराठी)',
+                chars: 'अ आ इ ई उ ऊ ए ऐ ओ औ अं अः क ख ग घ ङ च छ ज झ ञ ट ठ ड ढ ण त थ द ध न प फ ब भ म य र ल व श ष स ह ळ क्ष ज्ञ'.split(' '),
+                fonts: ['Noto Sans Devanagari', 'Noto Serif Devanagari', 'Mukta', 'Tiro Devanagari Hindi'],
+            },
+            'sanskrit': {
+                label: 'Sanskrit (संस्कृत)',
+                chars: 'अ आ इ ई उ ऊ ऋ ॠ ए ऐ ओ औ अं अः ॐ क ख ग घ ङ च छ ज झ ञ ट ठ ड ढ ण त थ द ध न प फ ब भ म य र ल व श ष स ह क्ष त्र ज्ञ श्र'.split(' '),
+                fonts: ['Noto Serif Devanagari', 'Noto Sans Devanagari', 'Tiro Devanagari Hindi', 'Mukta'],
+            },
+            'tamil': {
+                label: 'Tamil (தமிழ்)',
+                chars: 'அ ஆ இ ஈ உ ஊ எ ஏ ஐ ஒ ஓ ஔ க ங ச ஞ ட ண த ந ப ம ய ர ல வ ழ ள ற ன'.split(' '),
+                fonts: ['Noto Sans Tamil', 'serif'],
+            },
+            'telugu': {
+                label: 'Telugu (తెలుగు)',
+                chars: 'అ ఆ ఇ ఈ ఉ ఊ ఋ ఎ ఏ ఐ ఒ ఓ ఔ క ఖ గ ఘ చ ఛ జ ఝ ట ఠ డ ఢ ణ త థ ద ధ న ప ఫ బ భ మ య ర ల వ శ ష స హ'.split(' '),
+                fonts: ['Noto Sans Telugu', 'serif'],
+            },
+            'kannada': {
+                label: 'Kannada (ಕನ್ನಡ)',
+                chars: 'ಅ ಆ ಇ ಈ ಉ ಊ ಎ ಏ ಐ ಒ ಓ ಔ ಕ ಖ ಗ ಘ ಚ ಛ ಜ ಝ ಟ ಠ ಡ ಢ ಣ ತ ಥ ದ ಧ ನ ಪ ಫ ಬ ಭ ಮ ಯ ರ ಲ ವ ಶ ಷ ಸ ಹ'.split(' '),
+                fonts: ['Noto Sans Kannada', 'serif'],
+            },
+            'bengali': {
+                label: 'Bengali (বাংলা)',
+                chars: 'অ আ ই ঈ উ ঊ এ ঐ ও ঔ ক খ গ ঘ ঙ চ ছ জ ঝ ঞ ট ঠ ড ঢ ণ ত থ দ ধ ন প ফ ব ভ ম য র ল শ ষ স হ'.split(' '),
+                fonts: ['Noto Sans Bengali', 'serif'],
+            },
+            'gujarati': {
+                label: 'Gujarati (ગુજરાતી)',
+                chars: 'અ આ ઇ ઈ ઉ ઊ એ ઐ ઓ ઔ ક ખ ગ ઘ ચ છ જ ઝ ટ ઠ ડ ઢ ણ ત થ દ ધ ન પ ફ બ ભ મ ય ર લ વ શ ષ સ હ'.split(' '),
+                fonts: ['Noto Sans Gujarati', 'serif'],
+            },
+            'punjabi': {
+                label: 'Punjabi (ਪੰਜਾਬੀ)',
+                chars: 'ਅ ਆ ਇ ਈ ਉ ਊ ਏ ਐ ਓ ਔ ਕ ਖ ਗ ਘ ਚ ਛ ਜ ਝ ਟ ਠ ਡ ਢ ਣ ਤ ਥ ਦ ਧ ਨ ਪ ਫ ਬ ਭ ਮ ਯ ਰ ਲ ਵ ਸ਼ ਸ ਹ'.split(' '),
+                fonts: ['Noto Sans Gurmukhi', 'serif'],
+            },
+            'malayalam': {
+                label: 'Malayalam (മലയാളം)',
+                chars: 'അ ആ ഇ ഈ ഉ ഊ എ ഏ ഐ ഒ ഓ ഔ ക ഖ ഗ ഘ ച ഛ ജ ഝ ട ഠ ഡ ഢ ണ ത ഥ ദ ധ ന പ ഫ ബ ഭ മ യ ര ല വ ശ ഷ സ ഹ'.split(' '),
+                fonts: ['Noto Sans Malayalam', 'serif'],
+            },
+            'english': {
+                label: 'English (Aa)',
+                chars: 'A B C D E F G H I J K L M N O P Q R S T U V W X Y Z Aa'.split(' '),
+                fonts: ['Inter', 'Georgia', 'serif', 'monospace'],
+            },
+        };
+
+        let customPanelOpen = false;
+        let currentLangKey = null;
+
+        function toggleCustomPanel() {
+            customPanelOpen = !customPanelOpen;
+            const panel = document.getElementById('custom-text-panel');
+            const btn = document.getElementById('toggle-custom-btn');
+            panel.classList.toggle('active', customPanelOpen);
+            btn.classList.toggle('active', customPanelOpen);
+
+            if (customPanelOpen && !currentLangKey) {
+                // Build language preset tabs
+                const presetsEl = document.getElementById('lang-presets');
+                presetsEl.innerHTML = Object.entries(LANG_CHARSETS).map(([key, val]) =>
+                    `<span class="lang-preset" data-lang="${key}" onclick="selectLanguage('${key}')">${val.label}</span>`
+                ).join('');
+                // Default font dropdown
+                updateFontDropdown(['Inter', 'Georgia', 'serif', 'monospace']);
+            }
+        }
+
+        function selectLanguage(langKey) {
+            currentLangKey = langKey;
+            const lang = LANG_CHARSETS[langKey];
+            if (!lang) return;
+
+            // Highlight active preset
+            document.querySelectorAll('.lang-preset').forEach(el => {
+                el.classList.toggle('active', el.dataset.lang === langKey);
+            });
+
+            // Update font dropdown
+            updateFontDropdown(lang.fonts);
+
+            // Render character grid
+            renderCharGrid(lang.chars, lang.fonts[0]);
+        }
+
+        function updateFontDropdown(fonts) {
+            const select = document.getElementById('custom-font-select');
+            select.innerHTML = fonts.map(f =>
+                `<option value="${f}" style="font-family:'${f}'">${f}</option>`
+            ).join('');
+            select.onchange = () => {
+                if (currentLangKey) {
+                    renderCharGrid(LANG_CHARSETS[currentLangKey].chars, select.value);
+                }
+            };
+        }
+
+        function renderCharGrid(chars, fontFamily) {
+            const grid = document.getElementById('char-grid');
+            grid.innerHTML = '';
+            chars.forEach(ch => {
+                const card = document.createElement('div');
+                card.className = 'char-card';
+                card.style.fontFamily = `'${fontFamily}', sans-serif`;
+                card.textContent = ch;
+                card.title = `Click to save "${ch}" as icon`;
+                card.onclick = () => saveCharAsIcon(ch, fontFamily);
+                grid.appendChild(card);
+            });
+        }
+
+        function previewCustomChar() {
+            const input = document.getElementById('custom-char-input').value.trim();
+            if (!input) return;
+            const font = document.getElementById('custom-font-select').value;
+            renderCharGrid(input.split(''), font);
+        }
+
+        function generateCharSvg(char, fontFamily) {
+            // Escape for XML
+            const escaped = char.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"><text x="50" y="72" text-anchor="middle" font-family="'${fontFamily}', sans-serif" font-size="58" font-weight="600" fill="currentColor">${escaped}</text></svg>`;
+        }
+
+        async function saveCharAsIcon(char, fontFamily) {
+            if (!iconPickerSubjectId) return;
+            try {
+                const svgContent = generateCharSvg(char, fontFamily);
+                const iconName = `text:${char}`;
+
+                const res = await fetch(`${API}/api/library/${iconPickerSubjectId}/icon`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ icon_name: iconName, icon_svg: svgContent }),
+                });
+                if (!res.ok) throw new Error(await res.text());
+                const result = await res.json();
+
+                // Update local state
+                iconPickerCurrentIcon = iconName;
+                const subj = subjects.find(s => s.id === iconPickerSubjectId);
+                if (subj) subj.icon_name = iconName;
+
+                closeIconPicker();
+                showToast(`✓ Text icon "${char}" saved for ${result.subject_name}`, 'success');
+            } catch (e) {
+                showToast('Failed to save icon: ' + e.message, 'error');
+            }
+        }
+    </script>
+</body>
+
+</html>

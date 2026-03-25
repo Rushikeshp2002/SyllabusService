@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SyllabusService — Review Extraction</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/style.css" />
+    <!-- PDF.js (Mozilla) for in-browser PDF rendering -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs" type="module"></script>
+</head>
+
+<body>
+
+    <header>
+        <div class="logo">📚 SyllabusService</div>
+        <div class="subtitle" id="header-subtitle">Review & Approve Extraction</div>
+    </header>
+
+    <!-- Loading state -->
+    <div class="container" id="loading-view">
+        <div class="card" style="text-align:center; padding: 60px;">
+            <div class="spinner" style="width:36px;height:36px;border-width:3px;margin:0 auto 16px;"></div>
+            <p style="color:var(--muted)">Loading extraction result...</p>
+        </div>
+    </div>
+
+    <!-- Review layout -->
+    <div style="padding: 12px 16px; display:none;" id="review-view">
+
+        <div class="steps" style="max-width:100%;margin-bottom:12px;">
+            <div class="step done">① Upload PDF</div>
+            <div class="step done">② Processing</div>
+            <div class="step active">③ Review</div>
+            <div class="step">④ Insert to DB</div>
+        </div>
+
+        <!-- Warning banner (shown if validation had warnings) -->
+        <div class="banner warn" id="warning-banner" style="display:none"></div>
+
+        <div class="review-layout">
+
+            <!-- LEFT: PDF viewer -->
+            <div class="panel">
+                <div class="panel-header">
+                    <span id="pdf-title">PDF Viewer</span>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <input type="text" id="pdf-search" placeholder="Search in PDF..."
+                            style="font-size:0.75rem;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);width:150px;"
+                            onkeydown="if(event.key==='Enter') searchInPdf(this.value)" />
+                        <button class="btn" style="padding:6px 12px;font-size:0.75rem;background:var(--border);"
+                            onclick="searchInPdf(document.getElementById('pdf-search').value)">🔍</button>
+                        <span id="page-info" style="font-size:0.8rem;color:var(--muted)">Page 1</span>
+                    </div>
+                </div>
+                <div class="pdf-scroll-container" id="pdf-scroll-container"></div>
+            </div>
+
+            <!-- RIGHT: JSON Tree editor -->
+            <div class="panel">
+                <div class="panel-header">
+                    <span>Extracted Structure</span>
+                    <div style="display:flex;gap:8px;">
+                        <button class="btn" style="padding:6px 12px;font-size:0.75rem;background:var(--border);"
+                            onclick="expandAll()">Expand All</button>
+                        <button class="btn" style="padding:6px 12px;font-size:0.75rem;background:var(--border);"
+                            onclick="collapseAll()">Collapse All</button>
+                    </div>
+                </div>
+                <div class="panel-body" id="tree-container">
+                    <ul class="tree" id="tree-root"></ul>
+                </div>
+
+                <!-- Stats -->
+                <div class="stats-bar" id="stats-bar">
+                    <div>Chapters: <span id="stat-chapters">0</span></div>
+                    <div>Topics: <span id="stat-topics">0</span></div>
+                    <div>Subtopics: <span id="stat-subtopics">0</span></div>
+                    <div id="stat-questions-wrap" style="display:none;">Questions: <span id="stat-questions">0</span>
+                    </div>
+                </div>
+
+                <!-- Approve button -->
+                <div class="footer-actions">
+                    <button class="btn btn-success" style="flex:1;" id="approve-btn" onclick="approveAndInsert()">
+                        ✅ Approve & Insert to DB
+                    </button>
+                    <button class="btn" style="background:var(--border);" onclick="downloadJson()"
+                        title="Download JSON backup">
+                        📥
+                    </button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Success overlay -->
+    <div id="success-overlay"
+        style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:99;display:none;align-items:center;justify-content:center;">
+        <div class="card" style="max-width:440px;text-align:center;">
+            <div style="font-size:3rem;margin-bottom:16px;">✅</div>
+            <h2 style="margin-bottom:8px;">Inserted Successfully!</h2>
+            <p id="success-stats" style="color:var(--muted);font-size:0.9rem;margin-bottom:20px;"></p>
+            <a href="/" class="btn btn-primary btn-full">← Process Another Book</a>
+        </div>
+    </div>
+
+    <div id="toast"></div>
+
+    <script type="module">
+        import * as pdfjsLib from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs';
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs';
+
+        const API = 'http://localhost:8000';
+        const params = new URLSearchParams(window.location.search);
+        const jobId = params.get('job_id');
+
+        let extractionData = null;   // TextbookExtraction (mutable via tree edits)
+        let metaData = null;
+        let questionsData = null;    // List of ChapterQuestions (from Pass 3)
+        let pdfDoc = null;
+        let currentPage = 1;
+
+        // ── Load result from backend ────────────────────────────────────────────────
+        async function init() {
+            if (!jobId) { showError('No job_id in URL.'); return; }
+
+            try {
+                const res = await fetch(`${API}/result/${jobId}`);
+                if (!res.ok) throw new Error(await res.text());
+                const data = await res.json();
+
+                extractionData = data.extraction;
+                metaData = data.metadata;
+                questionsData = data.questions || null;
+
+                document.getElementById('header-subtitle').textContent =
+                    `${metaData.subject_name} — ${metaData.board} | ${metaData.grade} | ${metaData.medium}`;
+
+                if (data.validation_warning) {
+                    const banner = document.getElementById('warning-banner');
+                    banner.textContent = '⚠ ' + data.validation_warning;
+                    banner.style.display = 'block';
+                }
+
+                renderTree();
+                if (questionsData && questionsData.length > 0) {
+                    renderQuestions();
+                }
+                updateStats();
+                document.getElementById('loading-view').style.display = 'none';
+                document.getElementById('review-view').style.display = 'block';
+
+            } catch (e) { showError(e.message); }
+        }
+
+        // ── JSON Tree rendering ─────────────────────────────────────────────────────
+        function renderTree() {
+            const root = document.getElementById('tree-root');
+            root.innerHTML = '';
+            extractionData.chapters.forEach((ch, ci) => {
+                root.appendChild(buildChapterNode(ch, ci));
+            });
+        }
+
+        function buildChapterNode(ch, ci) {
+            const li = document.createElement('li');
+            const children = document.createElement('ul');
+            children.className = 'children';
+            (ch.topics || []).forEach((t, ti) => children.appendChild(buildTopicNode(t, ci, ti)));
+
+            li.innerHTML = `
+      <div class="tree-node">
+        <span class="tree-toggle" onclick="toggleChildren(this)">▼</span>
+        <span class="tree-label">
+          <strong style="color:var(--accent);font-size:0.75rem;margin-right:6px;">Ch.${ch.chapter_number}</strong>
+          <input type="text" value="${escHtml(ch.name)}"
+            onclick="searchInPdf(this.value)"
+            onchange="extractionData.chapters[${ci}].name = this.value" />
+        </span>
+        <span class="tree-actions">
+          <button class="tree-btn add" onclick="addTopic(${ci})" title="Add Topic">+ Topic</button>
+          <button class="tree-btn delete" onclick="deleteChapter(${ci})" title="Delete Chapter">🗑</button>
+        </span>
+      </div>`;
+
+            // For descriptive subjects, show content and description
+            if (metaData && metaData.is_descriptive) {
+                const contentDiv = document.createElement('div');
+                contentDiv.style.cssText = 'margin: 4px 0 4px 32px; font-size: 0.82rem;';
+
+                if (ch.description) {
+                    const descP = document.createElement('p');
+                    descP.style.cssText = 'color: var(--muted); margin: 4px 0; font-style: italic;';
+                    descP.textContent = ch.description;
+                    contentDiv.appendChild(descP);
+                }
+
+                if (ch.content) {
+                    const contentToggle = document.createElement('button');
+                    contentToggle.className = 'tree-btn';
+                    contentToggle.style.cssText = 'font-size: 0.72rem; color: var(--accent); background: none; border: 1px solid var(--border); padding: 2px 8px; border-radius: 4px; cursor: pointer; margin: 4px 0;';
+                    contentToggle.textContent = 'Show Content';
+
+                    const contentPre = document.createElement('pre');
+                    contentPre.style.cssText = 'white-space: pre-wrap; font-size: 0.78rem; color: var(--text); background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 6px; padding: 10px; max-height: 300px; overflow-y: auto; display: none; margin: 4px 0;';
+                    contentPre.textContent = ch.content;
+
+                    contentToggle.onclick = () => {
+                        const shown = contentPre.style.display !== 'none';
+                        contentPre.style.display = shown ? 'none' : 'block';
+                        contentToggle.textContent = shown ? 'Show Content' : 'Hide Content';
+                    };
+
+                    contentDiv.appendChild(contentToggle);
+                    contentDiv.appendChild(contentPre);
+                } else {
+                    const noContent = document.createElement('p');
+                    noContent.style.cssText = 'color: #ef4444; font-size: 0.75rem; margin: 4px 0;';
+                    noContent.textContent = 'No content extracted for this chapter';
+                    contentDiv.appendChild(noContent);
+                }
+
+                li.appendChild(contentDiv);
+            }
+
+            // For descriptive subjects with no topics, show a note instead of empty tree
+            if ((ch.topics || []).length === 0 && metaData && metaData.is_descriptive) {
+                const noTopicsNote = document.createElement('div');
+                noTopicsNote.style.cssText = 'margin-left: 32px; font-size: 0.72rem; color: var(--muted); font-style: italic;';
+                noTopicsNote.textContent = 'No topics (content-only chapter)';
+                li.appendChild(noTopicsNote);
+            } else {
+                li.appendChild(children);
+            }
+
+            return li;
+        }
+
+        function buildTopicNode(t, ci, ti) {
+            const li = document.createElement('li');
+            const children = document.createElement('ul');
+            children.className = 'children';
+            (t.subtopics || []).forEach((st, si) => children.appendChild(buildSubtopicNode(st, ci, ti, si)));
+
+            li.innerHTML = `
+      <div class="tree-node">
+        <span class="tree-toggle" onclick="toggleChildren(this)">▼</span>
+        <span class="tree-label">
+          <span style="color:var(--muted);font-size:0.72rem;margin-right:6px;">Topic</span>
+          <input type="text" value="${escHtml(t.name)}"
+            onclick="searchInPdf(this.value)"
+            onchange="extractionData.chapters[${ci}].topics[${ti}].name = this.value" />
+        </span>
+        <span class="tree-actions">
+          <button class="tree-btn add" onclick="addSubtopic(${ci},${ti})" title="Add Subtopic">+ Sub</button>
+          <button class="tree-btn delete" onclick="deleteTopic(${ci},${ti})" title="Delete Topic">🗑</button>
+        </span>
+      </div>`;
+            li.appendChild(children);
+            return li;
+        }
+
+        function buildSubtopicNode(st, ci, ti, si) {
+            const li = document.createElement('li');
+            li.innerHTML = `
+      <div class="tree-node">
+        <span style="width:16px;"></span>
+        <span class="tree-label">
+          <span style="color:var(--muted);font-size:0.7rem;margin-right:6px;">•</span>
+          <input type="text" value="${escHtml(st.name)}"
+            onclick="searchInPdf(this.value)"
+            onchange="extractionData.chapters[${ci}].topics[${ti}].subtopics[${si}].name = this.value" />
+        </span>
+        <span class="tree-actions">
+          <button class="tree-btn delete" onclick="deleteSubtopic(${ci},${ti},${si})" title="Delete">🗑</button>
+        </span>
+      </div>`;
+            return li;
+        }
+
+        // ── Tree mutations ──────────────────────────────────────────────────────────
+        function addTopic(ci) {
+            const ord = extractionData.chapters[ci].topics.length + 1;
+            extractionData.chapters[ci].topics.push({ name: 'New Topic', sort_order: ord, subtopics: [] });
+            renderTree(); updateStats();
+        }
+        function deleteTopic(ci, ti) {
+            extractionData.chapters[ci].topics.splice(ti, 1);
+            renderTree(); updateStats();
+        }
+        function addSubtopic(ci, ti) {
+            const ord = (extractionData.chapters[ci].topics[ti].subtopics || []).length + 1;
+            extractionData.chapters[ci].topics[ti].subtopics.push({ name: 'New Subtopic', sort_order: ord });
+            renderTree(); updateStats();
+        }
+        function deleteSubtopic(ci, ti, si) {
+            extractionData.chapters[ci].topics[ti].subtopics.splice(si, 1);
+            renderTree(); updateStats();
+        }
+        function deleteChapter(ci) {
+            if (!confirm(`Delete chapter "${extractionData.chapters[ci].name}"?`)) return;
+            extractionData.chapters.splice(ci, 1);
+            renderTree(); updateStats();
+        }
+
+        function toggleChildren(el) {
+            const children = el.closest('li').querySelector('.children');
+            if (!children) return;
+            const hidden = children.style.display === 'none';
+            children.style.display = hidden ? '' : 'none';
+            el.textContent = hidden ? '▼' : '▶';
+        }
+
+        window.expandAll = () => {
+            document.querySelectorAll('.children').forEach(el => el.style.display = '');
+            document.querySelectorAll('.tree-toggle').forEach(el => el.textContent = '▼');
+        };
+        window.collapseAll = () => {
+            document.querySelectorAll('.children').forEach(el => el.style.display = 'none');
+            document.querySelectorAll('.tree-toggle').forEach(el => el.textContent = '▶');
+        };
+
+        // ── Stats ───────────────────────────────────────────────────────────────────
+        function updateStats() {
+            const chapters = extractionData.chapters.length;
+            const topics = extractionData.chapters.reduce((s, c) => s + (c.topics || []).length, 0);
+            const subtopics = extractionData.chapters.reduce(
+                (s, c) => s + (c.topics || []).reduce((ss, t) => ss + (t.subtopics || []).length, 0), 0
+            );
+            document.getElementById('stat-chapters').textContent = chapters;
+
+            if (metaData && metaData.is_descriptive) {
+                const withContent = extractionData.chapters.filter(c => c.content && c.content.trim()).length;
+                document.getElementById('stat-topics').parentElement.innerHTML =
+                    `Content: <span>${withContent}/${chapters}</span>`;
+                document.getElementById('stat-subtopics').parentElement.innerHTML =
+                    `Topics: <span>${topics}</span>`;
+            } else {
+                document.getElementById('stat-topics').textContent = topics;
+                document.getElementById('stat-subtopics').textContent = subtopics;
+            }
+
+            // Questions stats
+            if (questionsData && questionsData.length > 0) {
+                const totalQs = questionsData.reduce((s, cq) =>
+                    s + cq.question_sets.reduce((ss, qs) => ss + (qs.questions || []).length, 0), 0
+                );
+                document.getElementById('stat-questions').textContent = totalQs;
+                document.getElementById('stat-questions-wrap').style.display = '';
+            }
+        }
+
+        // ── Questions rendering ─────────────────────────────────────────────────
+        function renderQuestions() {
+            if (!questionsData || questionsData.length === 0) return;
+
+            const container = document.getElementById('tree-container');
+            const section = document.createElement('div');
+            section.id = 'questions-section';
+            section.style.cssText = 'border-top: 2px solid var(--border); margin-top: 12px; padding-top: 12px;';
+
+            section.innerHTML = `
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                    <h3 style="margin:0;font-size:0.95rem;color:var(--accent);">📝 Extracted Questions</h3>
+                    <button class="btn" style="padding:4px 10px;font-size:0.72rem;background:var(--border);"
+                        onclick="document.getElementById('questions-section').querySelectorAll('details').forEach(d => d.open = !d.open)">Toggle All</button>
+                </div>
+            `;
+
+            questionsData.forEach(chQ => {
+                const chBlock = document.createElement('details');
+                chBlock.style.cssText = 'margin-bottom:8px;';
+
+                const totalQs = chQ.question_sets.reduce((s, qs) => s + (qs.questions || []).length, 0);
+                const summary = document.createElement('summary');
+                summary.style.cssText = 'cursor:pointer;font-weight:600;font-size:0.85rem;padding:6px 0;color:var(--text);';
+                summary.textContent = `Ch.${chQ.chapter_number}: ${chQ.chapter_name} — ${chQ.question_sets.length} sets, ${totalQs} questions`;
+                chBlock.appendChild(summary);
+
+                chQ.question_sets.forEach(qs => {
+                    const setDiv = document.createElement('div');
+                    setDiv.style.cssText = 'margin-left:16px;margin-bottom:8px;';
+
+                    const setBadge = qs.set_type === 'problem_set'
+                        ? '<span style="background:#ef4444;color:#fff;font-size:0.65rem;padding:1px 6px;border-radius:8px;margin-left:6px;">Problem Set</span>'
+                        : '<span style="background:#3b82f6;color:#fff;font-size:0.65rem;padding:1px 6px;border-radius:8px;margin-left:6px;">Practice</span>';
+
+                    setDiv.innerHTML = `<div style="font-weight:600;font-size:0.82rem;color:var(--text);margin-bottom:4px;">${escHtml(qs.name)} ${setBadge} <span style="color:var(--muted);font-size:0.72rem;">(${(qs.questions || []).length} questions)</span></div>`;
+
+                    (qs.questions || []).forEach(q => {
+                        setDiv.appendChild(buildQuestionElement(q));
+                    });
+
+                    chBlock.appendChild(setDiv);
+                });
+
+                section.appendChild(chBlock);
+            });
+
+            container.appendChild(section);
+        }
+
+        function buildQuestionElement(q, indent = 0) {
+            const qDiv = document.createElement('div');
+            qDiv.style.cssText = `margin-left:${12 + indent * 16}px;margin-bottom:4px;font-size:0.8rem;padding:4px 8px;border-left:2px solid var(--border);`;
+
+            const typeBadge = `<span style="background:var(--surface);border:1px solid var(--border);font-size:0.65rem;padding:1px 5px;border-radius:4px;margin-left:4px;">${q.question_type}</span>`;
+            const starMark = q.difficulty_marker ? ' <span style="color:#f59e0b;">\u2605</span>' : '';
+            const imgMark = q.has_image ? ' <span style="color:#8b5cf6;font-size:0.7rem;">\ud83d\uddbc\ufe0f</span>' : '';
+
+            let html = `<strong style="color:var(--muted);">${escHtml(q.question_number)}.</strong> ${escHtml(q.question_text)} ${typeBadge}${starMark}${imgMark}`;
+
+            if (q.options && q.options.length > 0) {
+                html += '<div style="margin-left:16px;margin-top:2px;color:var(--muted);font-size:0.75rem;">';
+                q.options.forEach(o => {
+                    html += `<span style="margin-right:12px;">(${escHtml(o.label)}) ${escHtml(o.text)}</span>`;
+                });
+                html += '</div>';
+            }
+
+            if (q.answer) {
+                html += `<div style="margin-left:16px;margin-top:2px;font-size:0.72rem;color:#10b981;"><strong>Ans:</strong> ${escHtml(q.answer)}</div>`;
+            }
+
+            if (q.image_description) {
+                html += `<div style="margin-left:16px;margin-top:2px;font-size:0.72rem;color:#8b5cf6;font-style:italic;">\ud83d\uddbc\ufe0f ${escHtml(q.image_description)}</div>`;
+            }
+
+            qDiv.innerHTML = html;
+
+            // SVG diagram preview + regenerate button
+            if (q.has_image) {
+                const svgContainer = document.createElement('div');
+                svgContainer.style.cssText = 'margin-left:16px;margin-top:6px;';
+
+                if (q.image_svg) {
+                    const svgPreview = document.createElement('div');
+                    svgPreview.style.cssText = 'background:#ffffff;border:1px solid var(--border);border-radius:8px;padding:8px;max-width:420px;margin-bottom:4px;';
+                    svgPreview.innerHTML = q.image_svg;
+                    // Ensure SVG fits container
+                    const svgEl = svgPreview.querySelector('svg');
+                    if (svgEl) { svgEl.style.width = '100%'; svgEl.style.height = 'auto'; }
+                    svgContainer.appendChild(svgPreview);
+                } else {
+                    const placeholder = document.createElement('div');
+                    placeholder.style.cssText = 'background:rgba(139,92,246,0.06);border:1px dashed rgba(139,92,246,0.3);border-radius:8px;padding:12px;max-width:420px;text-align:center;color:#8b5cf6;font-size:0.72rem;margin-bottom:4px;';
+                    placeholder.textContent = 'No SVG diagram generated';
+                    svgContainer.appendChild(placeholder);
+                }
+
+                const regenBtn = document.createElement('button');
+                regenBtn.className = 'btn';
+                regenBtn.style.cssText = 'padding:3px 10px;font-size:0.68rem;background:rgba(139,92,246,0.15);color:#8b5cf6;border:1px solid rgba(139,92,246,0.3);border-radius:6px;cursor:pointer;';
+                regenBtn.textContent = '🔄 Regenerate SVG';
+                regenBtn.onclick = async () => {
+                    regenBtn.disabled = true;
+                    regenBtn.textContent = '⏳ Generating...';
+                    try {
+                        const res = await fetch(`${API}/regenerate-svg`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                job_id: jobId,
+                                image_description: q.image_description || q.question_text,
+                            }),
+                        });
+                        if (!res.ok) throw new Error(await res.text());
+                        const data = await res.json();
+                        q.image_svg = data.image_svg;
+                        // Re-render the SVG preview
+                        const oldPreview = svgContainer.querySelector('div');
+                        const newPreview = document.createElement('div');
+                        newPreview.style.cssText = 'background:#ffffff;border:1px solid var(--border);border-radius:8px;padding:8px;max-width:420px;margin-bottom:4px;';
+                        newPreview.innerHTML = data.image_svg;
+                        const svgEl = newPreview.querySelector('svg');
+                        if (svgEl) { svgEl.style.width = '100%'; svgEl.style.height = 'auto'; }
+                        svgContainer.replaceChild(newPreview, oldPreview);
+                        showToast('SVG regenerated successfully', 'success');
+                    } catch (e) {
+                        showToast('SVG regeneration failed: ' + e.message, 'error');
+                    }
+                    regenBtn.disabled = false;
+                    regenBtn.textContent = '🔄 Regenerate SVG';
+                };
+                svgContainer.appendChild(regenBtn);
+                qDiv.appendChild(svgContainer);
+            }
+
+            // Render sub-questions
+            if (q.sub_questions && q.sub_questions.length > 0) {
+                q.sub_questions.forEach(sq => {
+                    qDiv.appendChild(buildQuestionElement(sq, indent + 1));
+                });
+            }
+
+            return qDiv;
+        }
+
+        // ── Approve & Insert ────────────────────────────────────────────────────────
+        window.approveAndInsert = async function () {
+            const btn = document.getElementById('approve-btn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Inserting...';
+
+            try {
+                const res = await fetch(`${API}/approve`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        job_id: jobId,
+                        extraction: extractionData,
+                        metadata: metaData,
+                        questions: questionsData,
+                    }),
+                });
+                if (!res.ok) throw new Error(await res.text());
+                const result = await res.json();
+
+                // Show success overlay
+                let statsText = `Chapters: ${result.chapters_inserted} | Topics: ${result.topics_inserted} | Subtopics: ${result.subtopics_inserted}`;
+                if (result.question_sets_inserted > 0) {
+                    statsText += ` | Q-Sets: ${result.question_sets_inserted} | Questions: ${result.questions_inserted}`;
+                }
+                document.getElementById('success-stats').textContent = statsText;
+                const overlay = document.getElementById('success-overlay');
+                overlay.style.display = 'flex';
+
+            } catch (e) {
+                showToast('Insert failed: ' + e.message, 'error');
+                btn.disabled = false;
+                btn.innerHTML = '✅ Approve & Insert to DB';
+            }
+        };
+
+        // ── Download JSON ───────────────────────────────────────────────────────────
+        window.downloadJson = function () {
+            const exportData = {
+                extraction: extractionData,
+                questions: questionsData,
+            };
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `${metaData.subject_name.replace(/\s+/g, '_')}_extraction.json`;
+            a.click();
+        };
+
+        // ── PDF viewer — scrollable all-pages rendering ──────────────────────────
+        const PDF_SCALE = 1.5;
+        const scrollContainer = document.getElementById('pdf-scroll-container');
+        const pageCanvases = [];   // array of { canvas, ctx, pageNum }
+
+        async function initPdfViewer() {
+            document.getElementById('pdf-title').textContent = `📄 ${metaData?.subject_name || 'PDF'}`;
+
+            try {
+                const pdfUrl = `${API}/pdf/${jobId}`;
+                pdfDoc = await pdfjsLib.getDocument(pdfUrl).promise;
+                document.getElementById('page-info').textContent = `Page 1 / ${pdfDoc.numPages}`;
+                await renderAllPages();
+                setupScrollTracking();
+            } catch (e) {
+                scrollContainer.innerHTML =
+                    `<div style="color:#64748b;padding:40px;text-align:center;">
+                        <p>PDF not available for this job.</p>
+                        <p style="font-size:0.8rem;margin-top:8px;">${e.message || ''}</p>
+                    </div>`;
+                console.warn('PDF viewer init failed:', e);
+            }
+        }
+
+        async function renderAllPages() {
+            scrollContainer.innerHTML = '';
+            pageCanvases.length = 0;
+
+            for (let pg = 1; pg <= pdfDoc.numPages; pg++) {
+                const page = await pdfDoc.getPage(pg);
+                const viewport = page.getViewport({ scale: PDF_SCALE });
+
+                const wrapper = document.createElement('div');
+                wrapper.className = 'pdf-page-wrapper';
+                wrapper.dataset.page = pg;
+
+                const canvas = document.createElement('canvas');
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                const ctx = canvas.getContext('2d');
+
+                wrapper.appendChild(canvas);
+                scrollContainer.appendChild(wrapper);
+                pageCanvases.push({ canvas, ctx, pageNum: pg });
+
+                await page.render({ canvasContext: ctx, viewport }).promise;
+            }
+        }
+
+        function setupScrollTracking() {
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting && entry.intersectionRatio > 0.3) {
+                        const pg = parseInt(entry.target.dataset.page);
+                        if (pg && pg !== currentPage) {
+                            currentPage = pg;
+                            document.getElementById('page-info').textContent = `Page ${pg} / ${pdfDoc.numPages}`;
+                        }
+                    }
+                });
+            }, { root: scrollContainer, threshold: [0.3, 0.7] });
+
+            scrollContainer.querySelectorAll('.pdf-page-wrapper').forEach(w => observer.observe(w));
+        }
+
+        function scrollToPage(pageNum) {
+            const wrapper = scrollContainer.querySelector(`.pdf-page-wrapper[data-page="${pageNum}"]`);
+            if (wrapper) wrapper.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        // ── Click-to-search: find text in PDF pages and highlight ─────────────────
+
+        window.searchInPdf = async function (searchTerm) {
+            if (!pdfDoc || !searchTerm) return;
+            const term = searchTerm.trim().toLowerCase();
+            if (term.length < 2) return;
+
+            // Search through all pages — concatenate text items per page
+            for (let pg = 1; pg <= pdfDoc.numPages; pg++) {
+                const page = await pdfDoc.getPage(pg);
+                const textContent = await page.getTextContent();
+
+                // Build concatenated page text with item positions
+                const fullText = textContent.items.map(item => item.str).join(' ').toLowerCase();
+                const matchIndex = fullText.indexOf(term);
+
+                if (matchIndex !== -1) {
+                    // Find which text items span the match
+                    let charPos = 0;
+                    let firstMatchItem = null;
+                    for (const item of textContent.items) {
+                        const itemEnd = charPos + item.str.length + 1; // +1 for the join space
+                        if (!firstMatchItem && itemEnd > matchIndex) {
+                            firstMatchItem = item;
+                            break;
+                        }
+                        charPos = itemEnd;
+                    }
+
+                    // Scroll to this page
+                    scrollToPage(pg);
+
+                    // Draw highlight on that page's canvas
+                    const entry = pageCanvases.find(p => p.pageNum === pg);
+                    if (entry && firstMatchItem) {
+                        const viewport = page.getViewport({ scale: PDF_SCALE });
+                        const tx = firstMatchItem.transform;
+                        const x = tx[4] * PDF_SCALE;
+                        const y = viewport.height - (tx[5] * PDF_SCALE) - (firstMatchItem.height * PDF_SCALE);
+                        const w = Math.max(firstMatchItem.width * PDF_SCALE, 200);
+                        const h = (firstMatchItem.height || 14) * PDF_SCALE;
+
+                        // Re-render the page to clear old highlights, then draw new one
+                        const pageObj = await pdfDoc.getPage(pg);
+                        await pageObj.render({ canvasContext: entry.ctx, viewport }).promise;
+
+                        entry.ctx.save();
+                        entry.ctx.fillStyle = 'rgba(255, 230, 0, 0.35)';
+                        entry.ctx.fillRect(x, y, w, h + 4);
+                        entry.ctx.strokeStyle = 'rgba(255, 200, 0, 0.8)';
+                        entry.ctx.lineWidth = 2;
+                        entry.ctx.strokeRect(x, y, w, h + 4);
+                        entry.ctx.restore();
+                    }
+
+                    showToast(`Found "${searchTerm}" on page ${pg}`, 'success');
+                    return;
+                }
+            }
+
+            showToast(`"${searchTerm}" not found in PDF`, 'error');
+        };
+
+        // ── Helpers ─────────────────────────────────────────────────────────────────
+        function showError(msg) {
+            document.getElementById('loading-view').innerHTML =
+                `<div class="card"><div class="banner error">Error: ${msg}</div>` +
+                `<a href="/" class="btn btn-primary" style="margin-top:16px;">← Go Back</a></div>`;
+        }
+
+        function escHtml(str) {
+            return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        }
+
+        window.showToast = function (msg, type = 'success') {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.className = `show ${type}`;
+            setTimeout(() => t.className = '', 3500);
+        };
+
+        // Expose tree mutation functions globally (called from inline onclick)
+        window.addTopic = addTopic;
+        window.deleteTopic = deleteTopic;
+        window.addSubtopic = addSubtopic;
+        window.deleteSubtopic = deleteSubtopic;
+        window.deleteChapter = deleteChapter;
+        window.toggleChildren = toggleChildren;
+
+        // ── Boot ─────────────────────────────────────────────────────────────────────
+        await init();
+        await initPdfViewer();
+    </script>
+</body>
+
+</html>

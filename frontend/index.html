@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SyllabusService — Upload Textbook</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+
+<body>
+
+  <header>
+    <div class="logo">📚 SyllabusService</div>
+    <div style="display:flex;align-items:center;gap:16px;">
+      <div class="subtitle">Textbook Ingestion Tool — PDF → Gemini → Supabase</div>
+      <a href="/library" class="btn" style="padding:6px 14px;font-size:0.78rem;background:rgba(99,102,241,0.15);color:#818cf8;border:1px solid rgba(99,102,241,0.3);text-decoration:none;border-radius:8px;">
+        📚 View Library
+      </a>
+    </div>
+  </header>
+
+  <div class="container">
+
+    <div class="steps">
+      <div class="step active">① Upload PDF</div>
+      <div class="step">② Processing</div>
+      <div class="step">③ Review</div>
+      <div class="step">④ Insert to DB</div>
+    </div>
+
+    <!-- Upload form card -->
+    <div class="card" id="upload-card">
+      <h2>Upload Textbook PDF</h2>
+
+      <!-- Drop zone -->
+      <div class="dropzone" id="dropzone">
+        <div class="icon">📄</div>
+        <p>Drag & drop a PDF here, or click to browse</p>
+        <div class="file-name" id="file-name-display" style="display:none"></div>
+        <input type="file" id="file-input" accept=".pdf" />
+      </div>
+
+      <br />
+
+      <!-- Metadata — two modes -->
+      <div style="margin-bottom: 14px; display:flex; gap:10px; align-items:center;">
+        <label style="font-size:0.85rem; color:var(--text);">Mode:</label>
+        <button class="btn" style="padding:6px 14px;font-size:0.8rem;" id="mode-manual-btn"
+          onclick="setMode('manual')">✏ Manual Entry (type values)</button>
+        <button class="btn" style="padding:6px 14px;font-size:0.8rem;background:var(--border);" id="mode-db-btn"
+          onclick="setMode('db')">🔗 From Database (cascade)</button>
+      </div>
+
+      <!-- MANUAL MODE (default) — simple text inputs, inserter will find-or-create -->
+      <div id="manual-fields">
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Region</label>
+            <input type="text" id="m-region" value="Asia" />
+          </div>
+          <div class="form-group">
+            <label>Country</label>
+            <input type="text" id="m-country" value="India" />
+          </div>
+          <div class="form-group">
+            <label>Board Name</label>
+            <input type="text" id="m-board" value="Maharashtra State Board" />
+          </div>
+          <div class="form-group">
+            <label>Grade</label>
+            <input type="text" id="m-grade" value="Class 10" />
+          </div>
+          <div class="form-group">
+            <label>Stream</label>
+            <input type="text" id="m-stream" value="General" />
+          </div>
+          <div class="form-group">
+            <label>Medium</label>
+            <select id="m-medium" onchange="syncMediumCode('m-medium')">
+              <option value="English" data-code="en" selected>English</option>
+              <option value="Hindi" data-code="hi">Hindi</option>
+              <option value="Urdu" data-code="ur">Urdu</option>
+              <option value="Marathi" data-code="mr">Marathi</option>
+              <option value="Gujarati" data-code="gu">Gujarati</option>
+              <option value="Tamil" data-code="ta">Tamil</option>
+              <option value="Kannada" data-code="kn">Kannada</option>
+              <option value="Telugu" data-code="te">Telugu</option>
+              <option value="Bengali" data-code="bn">Bengali</option>
+              <option value="Sindhi" data-code="sd">Sindhi</option>
+            </select>
+          </div>
+          <div class="form-group full">
+            <label>Subject Name</label>
+            <input type="text" id="m-subject" placeholder="e.g. Science and Technology Part 1" />
+          </div>
+          <div class="form-group full" style="margin-top:4px;">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.85rem;">
+              <input type="checkbox" id="m-descriptive" style="width:auto;accent-color:var(--accent);"
+                onchange="toggleExtractQuestions('m')" />
+              📖 Descriptive Subject <span style="color:var(--muted);font-size:0.75rem;">(language/literature — stories,
+                poems, essays)</span>
+            </label>
+          </div>
+          <div class="form-group full" id="m-extract-questions-wrap" style="margin-top:4px;">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.85rem;">
+              <input type="checkbox" id="m-extract-questions" style="width:auto;accent-color:#10b981;" />
+              📝 Extract Questions <span style="color:var(--muted);font-size:0.75rem;">(extract all problems/exercises
+                from the book)</span>
+            </label>
+          </div>
+        </div>
+        <p style="font-size:0.75rem;color:var(--muted);margin-top:8px;">
+          💡 Manual mode: type the exact names as seeded in the database (e.g. board = "Maharashtra State Board of
+          Secondary &amp; Higher Secondary Education" or short_name).
+          The system will look up the hierarchy — all data must exist from seed.sql.
+        </p>
+      </div>
+
+      <!-- DB CASCADE MODE — dropdowns populated from Supabase -->
+      <div id="db-fields" style="display:none;">
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Region</label>
+            <select id="d-region" onchange="loadCountries()">
+              <option value="">— Select —</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Country</label>
+            <select id="d-country" onchange="loadSystems()">
+              <option value="">— Select —</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Board</label>
+            <select id="d-system" onchange="loadLevels()">
+              <option value="">— Select —</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Level</label>
+            <select id="d-level" onchange="loadGrades()">
+              <option value="">— Select —</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Grade</label>
+            <select id="d-grade" onchange="loadStreams()">
+              <option value="">— Select —</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Stream</label>
+            <select id="d-stream">
+              <option value="">— Select —</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Medium</label>
+            <select id="d-medium" onchange="syncMediumCode('d-medium')">
+              <option value="English" data-code="en" selected>English</option>
+              <option value="Hindi" data-code="hi">Hindi</option>
+              <option value="Urdu" data-code="ur">Urdu</option>
+              <option value="Marathi" data-code="mr">Marathi</option>
+              <option value="Gujarati" data-code="gu">Gujarati</option>
+              <option value="Tamil" data-code="ta">Tamil</option>
+              <option value="Kannada" data-code="kn">Kannada</option>
+              <option value="Telugu" data-code="te">Telugu</option>
+              <option value="Bengali" data-code="bn">Bengali</option>
+              <option value="Sindhi" data-code="sd">Sindhi</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Subject Name</label>
+            <input type="text" id="d-subject" placeholder="e.g. Mathematics Part 1" />
+          </div>
+          <div class="form-group full" style="margin-top:4px;">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.85rem;">
+              <input type="checkbox" id="d-descriptive" style="width:auto;accent-color:var(--accent);"
+                onchange="toggleExtractQuestions('d')" />
+              📖 Descriptive Subject <span style="color:var(--muted);font-size:0.75rem;">(language/literature — stories,
+                poems, essays)</span>
+            </label>
+          </div>
+          <div class="form-group full" id="d-extract-questions-wrap" style="margin-top:4px;">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.85rem;">
+              <input type="checkbox" id="d-extract-questions" style="width:auto;accent-color:#10b981;" />
+              📝 Extract Questions <span style="color:var(--muted);font-size:0.75rem;">(extract all problems/exercises
+                from the book)</span>
+            </label>
+          </div>
+        </div>
+        <p style="font-size:0.75rem;color:var(--muted);margin-top:8px;">
+          🔗 DB mode: dropdowns pull live data from Supabase. Requires seed data to exist.
+        </p>
+      </div>
+    </div>
+
+    <!-- Progress card (hidden initially) -->
+    <div class="card" id="progress-card" style="display:none">
+      <h2>Processing</h2>
+      <div class="progress-wrap">
+        <div class="progress-label" id="progress-label">Uploading to Gemini...</div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="progress-bar" style="width:10%"></div>
+        </div>
+        <div class="status-msg" id="status-msg"></div>
+      </div>
+    </div>
+
+    <button class="btn btn-primary btn-full" id="start-btn" onclick="startProcessing()">
+      ▶ Start Processing
+    </button>
+
+  </div>
+
+  <div id="toast"></div>
+
+  <script>
+    const API = '';  // same-origin
+    let selectedFile = null;
+    let mediumCode = 'en';
+    let currentMode = 'manual';
+
+    // ── Mode switching ─────────────────────────────────────────────────────────
+    function setMode(mode) {
+      currentMode = mode;
+      document.getElementById('manual-fields').style.display = mode === 'manual' ? '' : 'none';
+      document.getElementById('db-fields').style.display = mode === 'db' ? '' : 'none';
+      document.getElementById('mode-manual-btn').style.background = mode === 'manual' ? 'var(--accent)' : 'var(--border)';
+      document.getElementById('mode-db-btn').style.background = mode === 'db' ? 'var(--accent)' : 'var(--border)';
+      if (mode === 'db') loadRegions();
+    }
+
+    // Hide "Extract Questions" when descriptive mode is checked
+    function toggleExtractQuestions(prefix) {
+      const isDescriptive = document.getElementById(`${prefix}-descriptive`).checked;
+      const wrap = document.getElementById(`${prefix}-extract-questions-wrap`);
+      if (wrap) {
+        wrap.style.display = isDescriptive ? 'none' : '';
+        // Uncheck if hiding
+        if (isDescriptive) {
+          document.getElementById(`${prefix}-extract-questions`).checked = false;
+        }
+      }
+    }
+
+    // ── Drop zone ──────────────────────────────────────────────────────────────
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('file-input');
+
+    dropzone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => handleFile(fileInput.files[0]));
+    dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag-over'));
+    dropzone.addEventListener('drop', e => {
+      e.preventDefault(); dropzone.classList.remove('drag-over');
+      handleFile(e.dataTransfer.files[0]);
+    });
+
+    function handleFile(file) {
+      if (!file || !file.name.endsWith('.pdf')) { showToast('Please select a PDF file.', 'error'); return; }
+      selectedFile = file;
+      const display = document.getElementById('file-name-display');
+      display.textContent = `📄 ${file.name}  (${(file.size / 1048576).toFixed(1)} MB)`;
+      display.style.display = 'block';
+    }
+
+    function syncMediumCode(selectId) {
+      const sel = document.getElementById(selectId);
+      mediumCode = sel.options[sel.selectedIndex].dataset.code || 'en';
+    }
+
+    // ── Cascade DB loaders ─────────────────────────────────────────────────────
+    async function loadRegions() {
+      const data = await fetch(`${API}/api/regions`).then(r => r.json());
+      fillSelect('d-region', data, 'name');
+    }
+    async function loadCountries() {
+      const rid = val('d-region', 'id');
+      if (!rid) return;
+      const data = await fetch(`${API}/api/countries?region_id=${rid}`).then(r => r.json());
+      fillSelect('d-country', data, 'name');
+    }
+    async function loadSystems() {
+      const cid = val('d-country', 'id');
+      if (!cid) return;
+      const data = await fetch(`${API}/api/systems?country_id=${cid}`).then(r => r.json());
+      fillSelect('d-system', data, 'name');
+    }
+    async function loadLevels() {
+      const sid = val('d-system', 'id');
+      if (!sid) return;
+      const data = await fetch(`${API}/api/levels?system_id=${sid}`).then(r => r.json());
+      fillSelect('d-level', data, 'name');
+    }
+    async function loadGrades() {
+      const lid = val('d-level', 'id');
+      if (!lid) return;
+      const data = await fetch(`${API}/api/grades?level_id=${lid}`).then(r => r.json());
+      fillSelect('d-grade', data, 'name');
+    }
+    async function loadStreams() {
+      const gid = val('d-grade', 'id');
+      if (!gid) return;
+      const data = await fetch(`${API}/api/streams?grade_id=${gid}`).then(r => r.json());
+      fillSelect('d-stream', data, 'name');
+    }
+
+    function fillSelect(selectId, data, labelField) {
+      const sel = document.getElementById(selectId);
+      sel.innerHTML = '<option value="">— Select —</option>';
+      data.forEach(item => {
+        const opt = document.createElement('option');
+        opt.value = JSON.stringify(item);  // store full object in value
+        opt.textContent = item[labelField] || item.name;
+        sel.appendChild(opt);
+      });
+    }
+
+    function val(selectId, field) {
+      const raw = document.getElementById(selectId).value;
+      if (!raw) return null;
+      try { return JSON.parse(raw)[field]; } catch { return raw; }
+    }
+    function valText(selectId, field) {
+      const raw = document.getElementById(selectId).value;
+      if (!raw) return '';
+      try { return JSON.parse(raw)[field] || ''; } catch { return raw; }
+    }
+
+    // ── Start processing ───────────────────────────────────────────────────────
+    async function startProcessing() {
+      if (!selectedFile) { showToast('Please select a PDF file first.', 'error'); return; }
+
+      let subjectName, region, country, board, grade, stream, medium;
+      let education_system_id = '', education_level_id = '', grade_id = '', stream_id = '';
+
+      if (currentMode === 'manual') {
+        subjectName = document.getElementById('m-subject').value.trim();
+        region = document.getElementById('m-region').value.trim();
+        country = document.getElementById('m-country').value.trim();
+        board = document.getElementById('m-board').value.trim();
+        grade = document.getElementById('m-grade').value.trim();
+        stream = document.getElementById('m-stream').value.trim();
+        medium = document.getElementById('m-medium').value;
+      } else {
+        subjectName = document.getElementById('d-subject').value.trim();
+        region = valText('d-region', 'name');
+        country = valText('d-country', 'name');
+        board = valText('d-system', 'name');
+        grade = valText('d-grade', 'name');
+        stream = valText('d-stream', 'name');
+        medium = document.getElementById('d-medium').value;
+        education_system_id = val('d-system', 'id') || '';
+        education_level_id = val('d-level', 'id') || '';
+        grade_id = val('d-grade', 'id') || '';
+        stream_id = val('d-stream', 'id') || '';
+      }
+
+      if (!subjectName) { showToast('Please enter the subject name.', 'error'); return; }
+      if (!board) { showToast('Please select/enter the board.', 'error'); return; }
+
+      const btn = document.getElementById('start-btn');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Uploading...';
+      document.getElementById('upload-card').style.opacity = '0.5';
+      document.getElementById('progress-card').style.display = 'block';
+
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      formData.append('region', region);
+      formData.append('country', country);
+      formData.append('board', board);
+      formData.append('grade', grade);
+      formData.append('stream', stream);
+      formData.append('medium', medium);
+      formData.append('medium_code', mediumCode);
+      formData.append('subject_name', subjectName);
+      formData.append('education_system_id', education_system_id);
+      formData.append('education_level_id', education_level_id);
+      formData.append('grade_id', grade_id);
+      formData.append('stream_id', stream_id);
+
+      // Descriptive mode toggle
+      const descriptiveCheckbox = currentMode === 'manual'
+        ? document.getElementById('m-descriptive')
+        : document.getElementById('d-descriptive');
+      formData.append('is_descriptive', descriptiveCheckbox?.checked ? 'true' : 'false');
+
+      // Extract questions toggle
+      const extractQuestionsCheckbox = currentMode === 'manual'
+        ? document.getElementById('m-extract-questions')
+        : document.getElementById('d-extract-questions');
+      formData.append('extract_questions', extractQuestionsCheckbox?.checked ? 'true' : 'false');
+
+      try {
+        const res = await fetch(`${API}/upload`, { method: 'POST', body: formData });
+        if (!res.ok) throw new Error(await res.text());
+        const { job_id } = await res.json();
+        pollStatus(job_id);
+      } catch (err) {
+        showToast(`Upload failed: ${err.message}`, 'error');
+        btn.disabled = false;
+        btn.innerHTML = '▶ Start Processing';
+      }
+    }
+
+    // ── Poll status ────────────────────────────────────────────────────────────
+    async function pollStatus(jobId) {
+      const label = document.getElementById('progress-label');
+      const bar = document.getElementById('progress-bar');
+      const msg = document.getElementById('status-msg');
+
+      const interval = setInterval(async () => {
+        try {
+          const res = await fetch(`${API}/status/${jobId}`);
+          const data = await res.json();
+          label.textContent = data.progress;
+
+          let pct = 20;
+          if (data.progress.includes('Pass 1')) pct = 30;
+          if (data.progress.includes('Pass 2') || data.progress.includes('full')) pct = 55;
+          if (data.progress.includes('Pass 3') || data.progress.includes('questions')) pct = 75;
+          if (data.progress.includes('Validat')) pct = 85;
+          if (data.status === 'done') pct = 100;
+          bar.style.width = pct + '%';
+
+          if (data.warning) {
+            msg.textContent = '⚠ ' + data.warning;
+            msg.className = 'status-msg warn';
+          }
+
+          if (data.status === 'done') {
+            clearInterval(interval);
+            msg.textContent = '✓ Extraction complete! Redirecting to review...';
+            msg.className = 'status-msg ok';
+            setTimeout(() => { window.location.href = `/review?job_id=${jobId}`; }, 1200);
+          } else if (data.status === 'error') {
+            clearInterval(interval);
+            msg.textContent = '✗ Error: ' + data.error;
+            msg.className = 'status-msg error';
+            document.getElementById('start-btn').disabled = false;
+            document.getElementById('start-btn').innerHTML = '▶ Start Processing';
+            document.getElementById('upload-card').style.opacity = '1';
+          }
+        } catch (e) { }
+      }, 2500);
+    }
+
+    // ── Toast ──────────────────────────────────────────────────────────────────
+    function showToast(msg, type = 'success') {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = `show ${type}`;
+      setTimeout(() => t.className = '', 3500);
+    }
+  </script>
+</body>
+
+</html>

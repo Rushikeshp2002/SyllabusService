@@ -1,0 +1,791 @@
+# Sarthi Syllabus Tab — Database Design
+## Scalable Architecture for Universal Course & Syllabus Management
+
+> [!IMPORTANT]
+> This design must support every education pattern worldwide — school boards, university degrees, competitive exams, professional courses — using a single, unified schema. No separate tables per country or board.
+
+---
+
+## Design Principles
+
+1. **Single hierarchy, infinite depth** — Country → Board → Level → Grade → Stream → Subject → Chapter → Topic → Subtopic
+2. **No hardcoded education types** — Whether it's CBSE Class 10, AP Calculus, or B.Tech CSE Semester 3, the same tables hold the data
+3. **Regional flexibility** — A board can span one country (CBSE → India) or many (IB → Global)
+4. **Medium/Language aware** — India has 22 official languages; CBSE publishes in all 22, Maharashtra Board publishes in English, Hindi, Urdu, Gujarati, Kannada, Sindhi, Telugu, Tamil, Bengali. `medium` lives on **subjects** (one medium = one separate textbook), and the user's chosen medium is stored in their enrollment record.
+5. **Minimal joins for reads** — The Syllabus Tab is read-heavy; optimize for fast tree traversal
+6. **User enrollment linkage** — Connect user's onboarding selections (board, grade, stream, **medium**) to the correct syllabus
+7. **Supabase-native** — PostgreSQL with Row Level Security, UUID primary keys, `timestamptz` timestamps
+
+---
+
+## ER Diagram
+
+```mermaid
+erDiagram
+    regions ||--o{ countries : "has"
+    countries ||--o{ education_systems : "governed_by"
+    education_systems ||--o{ education_levels : "offers"
+    education_levels ||--o{ grades : "contains"
+    grades ||--o{ streams : "branches_into"
+    streams ||--o{ subjects : "teaches"
+    subjects ||--o{ chapters : "organized_into"
+    chapters ||--o{ topics : "covers"
+    topics ||--o{ subtopics : "details"
+
+    user_curriculum_enrollments }o--|| education_systems : "enrolled_in"
+    user_curriculum_enrollments }o--|| grades : "studying"
+    user_curriculum_enrollments }o--|| streams : "pursuing"
+
+    regions {
+        uuid id PK
+        text name
+        text code
+    }
+
+    countries {
+        uuid id PK
+        uuid region_id FK
+        text name
+        text iso_code
+        text flag_emoji
+    }
+
+    education_systems {
+        uuid id PK
+        uuid country_id FK
+        text name
+        text short_name
+        text system_type
+        text description
+        boolean is_active
+    }
+
+    education_levels {
+        uuid id PK
+        uuid education_system_id FK
+        text name
+        text level_type
+        int sort_order
+    }
+
+    grades {
+        uuid id PK
+        uuid education_level_id FK
+        text name
+        text display_name
+        int sort_order
+    }
+
+    streams {
+        uuid id PK
+        uuid grade_id FK
+        text name
+        text description
+        int sort_order
+    }
+
+    subjects {
+        uuid id PK
+        uuid stream_id FK
+        text name
+        text medium
+        text medium_code
+        text code
+        text icon_name
+        text accent_color
+        int chapter_count
+        int sort_order
+    }
+
+    chapters {
+        uuid id PK
+        uuid subject_id FK
+        text name
+        text description
+        int chapter_number
+        int sort_order
+    }
+
+    topics {
+        uuid id PK
+        uuid chapter_id FK
+        text name
+        text description
+        int sort_order
+    }
+
+    subtopics {
+        uuid id PK
+        uuid topic_id FK
+        text name
+        text description
+        int sort_order
+    }
+
+    user_curriculum_enrollments {
+        uuid id PK
+        uuid user_id FK
+        uuid education_system_id FK
+        uuid grade_id FK
+        uuid stream_id FK
+        text medium_code
+        boolean is_active
+    }
+```
+
+---
+
+## Table Definitions
+
+### Layer 1: Geo-Political
+
+#### `regions`
+Continents/macro-regions for UI grouping.
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| [id](file:///e:/Sarthi/SarthiBackendV1/app/models/schemas.py#67-72) | `uuid` | PK, default `gen_random_uuid()` | |
+| [name](file:///e:/Sarthi/SarthiBackendV1/app/routes/auth.py#124-137) | `text` | NOT NULL, UNIQUE | e.g., "Asia", "Europe", "North America" |
+| `code` | `text` | NOT NULL, UNIQUE | e.g., "AS", "EU", "NA" |
+| `sort_order` | `int` | default 0 | For UI ordering |
+| `created_at` | `timestamptz` | default `now()` | |
+
+**Estimated rows**: ~7
+
+---
+
+#### `countries`
+Individual nations.
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| [id](file:///e:/Sarthi/SarthiBackendV1/app/models/schemas.py#67-72) | `uuid` | PK | |
+| `region_id` | `uuid` | FK → regions.id | |
+| [name](file:///e:/Sarthi/SarthiBackendV1/app/routes/auth.py#124-137) | `text` | NOT NULL | e.g., "India", "United States" |
+| `iso_code` | `text(2)` | NOT NULL, UNIQUE | ISO 3166-1 alpha-2 |
+| `flag_emoji` | `text` | | e.g., "🇮🇳", "🇺🇸" |
+| `is_active` | `boolean` | default `true` | Control visibility |
+| `sort_order` | `int` | default 0 | |
+| `created_at` | `timestamptz` | default `now()` | |
+
+**Estimated rows**: ~20–50 (active)
+
+---
+
+### Layer 2: Curriculum Authority
+
+#### `education_systems`
+Boards, curricula, exam bodies. This is the **most critical** table — it links a country to an education framework.
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| [id](file:///e:/Sarthi/SarthiBackendV1/app/models/schemas.py#67-72) | `uuid` | PK | |
+| `country_id` | `uuid` | FK → countries.id, NULLABLE | NULL for global systems (IB, Cambridge) |
+| [name](file:///e:/Sarthi/SarthiBackendV1/app/routes/auth.py#124-137) | `text` | NOT NULL | "Central Board of Secondary Education" |
+| `short_name` | `text` | NOT NULL | "CBSE" |
+| `system_type` | `text` | NOT NULL | See enum below |
+| `description` | `text` | | Brief description |
+| `logo_url` | `text` | | Board/system logo |
+| `is_active` | `boolean` | default `true` | |
+| `sort_order` | `int` | default 0 | |
+| `created_at` | `timestamptz` | default `now()` | |
+| `updated_at` | `timestamptz` | default `now()` | |
+
+**`system_type` values**:
+- `national_board` — CBSE, NIOS
+- `private_board` — ICSE/ISC (CISCE)
+- `state_board` — Maharashtra Board, Tamil Nadu Board
+- `international_curriculum` — IB, Cambridge IGCSE
+- `university` — DU, Mumbai University, IITs
+- `competitive_exam` — JEE, NEET, UPSC
+- `professional_course` — CA, CS, CFA
+- `vocational` — ITI, Polytechnic
+
+**Estimated rows**: ~100–200
+
+> [!TIP]
+> For **IB** and **Cambridge IGCSE** which span multiple countries, set `country_id = NULL`. The frontend can show these as "Global Curricula" available everywhere.
+
+---
+
+#### `education_levels`
+The stage within an education system (Primary, Secondary, UG, PG, etc.).
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| [id](file:///e:/Sarthi/SarthiBackendV1/app/models/schemas.py#67-72) | `uuid` | PK | |
+| `education_system_id` | `uuid` | FK → education_systems.id | |
+| [name](file:///e:/Sarthi/SarthiBackendV1/app/routes/auth.py#124-137) | `text` | NOT NULL | "Secondary", "Senior Secondary", "Undergraduate" |
+| `level_type` | `text` | NOT NULL | See enum below |
+| `age_range` | `text` | | "14-16", "18-22" |
+| `duration_years` | `int` | | 2, 3, 4 etc. |
+| `sort_order` | `int` | default 0 | |
+| `created_at` | `timestamptz` | default `now()` | |
+
+**`level_type` values**: `pre_primary`, `primary`, `middle`, `secondary`, `senior_secondary`, `diploma`, `undergraduate`, `postgraduate`, `doctoral`, `competitive_exam`, `certificate`
+
+**Estimated rows**: ~500–1000
+
+---
+
+### Layer 3: Course Structure
+
+#### `grades`
+Individual class/year/semester within a level. Very flexible — "Class 10", "Year 11", "Semester 3", "Phase 1", etc.
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| [id](file:///e:/Sarthi/SarthiBackendV1/app/models/schemas.py#67-72) | `uuid` | PK | |
+| `education_level_id` | `uuid` | FK → education_levels.id | |
+| [name](file:///e:/Sarthi/SarthiBackendV1/app/routes/auth.py#124-137) | `text` | NOT NULL | "Class 10", "Year 12", "Semester 3" |
+| `display_name` | `text` | | "10th Standard", "Grade 10", "S3" |
+| `numeric_value` | `int` | | 10, 12, 3 — for sorting |
+| `sort_order` | `int` | default 0 | |
+| `created_at` | `timestamptz` | default `now()` | |
+
+**Estimated rows**: ~3,000–5,000
+
+---
+
+#### `streams`
+Branches/majors/specializations within a grade. For grades without streams (e.g., Class 1–10), insert a single "General" stream.
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| [id](file:///e:/Sarthi/SarthiBackendV1/app/models/schemas.py#67-72) | `uuid` | PK | |
+| `grade_id` | `uuid` | FK → grades.id | |
+| [name](file:///e:/Sarthi/SarthiBackendV1/app/routes/auth.py#124-137) | `text` | NOT NULL | "Science (PCM)", "Commerce", "General", "CSE" |
+| `description` | `text` | | |
+| `is_default` | `boolean` | default `false` | `true` for the "General" stream |
+| `sort_order` | `int` | default 0 | |
+| `created_at` | `timestamptz` | default `now()` | |
+
+**Estimated rows**: ~8,000–15,000
+
+> [!NOTE]
+> **Why "General" streams?** For consistency, every grade MUST have at least one stream. For Class 1–10 where there are no streams, use a single stream named "General" with `is_default = true`. This avoids NULL foreign keys in `subjects` and keeps queries simple.
+
+---
+
+#### `subjects`
+Individual courses/subjects within a stream. **Each medium of a subject is a separate row** — e.g., "Mathematics (English)" and "Mathematics (Urdu)" are two rows under the same stream.
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | `uuid` | PK | |
+| `stream_id` | `uuid` | FK → streams.id | |
+| `name` | `text` | NOT NULL | "Mathematics", "गणित", "ریاضی" |
+| `medium` | `text` | NOT NULL, default `'English'` | Full name: "English", "Hindi", "Urdu", "Marathi", "Tamil", "Gujarati", "Kannada", "Sindhi", "Telugu", "Bengali" |
+| `medium_code` | `text(5)` | NOT NULL, default `'en'` | BCP-47 code: "en", "hi", "ur", "mr", "ta", "gu", "kn", "sd", "te", "bn" |
+| `code` | `text` | | "MATH", "PHY", "ACC" |
+| `icon_name` | `text` | | Ionicons name: "calculator-outline" |
+| `accent_color` | `text` | | Hex color: "#3b82f6" |
+| `chapter_count` | `int` | default 0 | Denormalized for fast UI display |
+| `description` | `text` | | |
+| `sort_order` | `int` | default 0 | |
+| `is_active` | `boolean` | default `true` | |
+| `created_at` | `timestamptz` | default `now()` | |
+
+**UNIQUE constraint**: `(stream_id, name, medium_code)` — prevents duplicate subject rows for the same stream + medium.
+
+**Estimated rows**: ~20,000–50,000 (multiplied by number of mediums per board)
+
+> [!NOTE]
+> **Why medium on subjects, not streams or chapters?** A medium = a separate textbook. Chapters/topics inherit the medium implicitly from their parent subject. Adding medium at the chapter/topic level would bloat those million-row tables needlessly. Adding it at the stream level is semantically wrong — a student is in the "Science stream", not an "English-medium Science stream".
+
+---
+
+### Layer 4: Content Hierarchy
+
+#### `chapters` (also called Units/Modules)
+Top-level content grouping within a subject.
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| [id](file:///e:/Sarthi/SarthiBackendV1/app/models/schemas.py#67-72) | `uuid` | PK | |
+| `subject_id` | `uuid` | FK → subjects.id | |
+| [name](file:///e:/Sarthi/SarthiBackendV1/app/routes/auth.py#124-137) | `text` | NOT NULL | "Real Numbers", "Light - Reflection and Refraction" |
+| `chapter_number` | `int` | | 1, 2, 3... |
+| `description` | `text` | | Brief overview |
+| `sort_order` | `int` | default 0 | |
+| `created_at` | `timestamptz` | default `now()` | |
+
+**Estimated rows**: ~100,000–250,000
+
+---
+
+#### `topics`
+Sections/lessons within a chapter.
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| [id](file:///e:/Sarthi/SarthiBackendV1/app/models/schemas.py#67-72) | `uuid` | PK | |
+| `chapter_id` | `uuid` | FK → chapters.id | |
+| [name](file:///e:/Sarthi/SarthiBackendV1/app/routes/auth.py#124-137) | `text` | NOT NULL | "Euclid's Division Lemma", "Laws of Reflection" |
+| `description` | `text` | | |
+| `sort_order` | `int` | default 0 | |
+| `created_at` | `timestamptz` | default `now()` | |
+
+**Estimated rows**: ~300,000–750,000
+
+---
+
+#### `subtopics`
+Finest granularity — individual concepts, definitions, theorems.
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| [id](file:///e:/Sarthi/SarthiBackendV1/app/models/schemas.py#67-72) | `uuid` | PK | |
+| `topic_id` | `uuid` | FK → topics.id | |
+| [name](file:///e:/Sarthi/SarthiBackendV1/app/routes/auth.py#124-137) | `text` | NOT NULL | "Algorithm to find HCF", "Proof of √2 is irrational" |
+| `description` | `text` | | |
+| `sort_order` | `int` | default 0 | |
+| `created_at` | `timestamptz` | default `now()` | |
+
+**Estimated rows**: ~500,000–2,000,000
+
+---
+
+### Layer 5: User Binding
+
+#### `user_curriculum_enrollments`
+Links user profiles to their selected curriculum. Replaces the current `education_category` / `class_level` / `stream` text fields.
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `id` | `uuid` | PK | |
+| `user_id` | `uuid` | FK → auth.users(id), NOT NULL | |
+| `education_system_id` | `uuid` | FK → education_systems.id | |
+| `grade_id` | `uuid` | FK → grades.id | |
+| `stream_id` | `uuid` | FK → streams.id, NULLABLE | NULL if grade has only "General" |
+| `medium_code` | `text(5)` | NOT NULL, default `'en'` | **(NEW)** User's chosen medium: "en", "hi", "ur", "mr", "ta", etc. |
+| `is_active` | `boolean` | default `true` | Support multiple enrollments |
+| `enrolled_at` | `timestamptz` | default `now()` | |
+| `created_at` | `timestamptz` | default `now()` | |
+
+**Estimated rows**: = number of users
+
+---
+
+## SQL DDL (Supabase/PostgreSQL)
+
+```sql
+-- ============================================================
+-- SARTHI UNIVERSAL SYLLABUS SCHEMA
+-- ============================================================
+
+-- Layer 1: Geo-Political
+CREATE TABLE regions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL UNIQUE,
+    code TEXT NOT NULL UNIQUE,
+    sort_order INT DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE countries (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    region_id UUID REFERENCES regions(id) ON DELETE SET NULL,
+    name TEXT NOT NULL,
+    iso_code TEXT NOT NULL UNIQUE,
+    flag_emoji TEXT,
+    is_active BOOLEAN DEFAULT true,
+    sort_order INT DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Layer 2: Curriculum Authority
+CREATE TABLE education_systems (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    country_id UUID REFERENCES countries(id) ON DELETE SET NULL,
+    name TEXT NOT NULL,
+    short_name TEXT NOT NULL,
+    system_type TEXT NOT NULL CHECK (system_type IN (
+        'national_board', 'private_board', 'state_board',
+        'international_curriculum', 'university',
+        'competitive_exam', 'professional_course', 'vocational'
+    )),
+    description TEXT,
+    logo_url TEXT,
+    is_active BOOLEAN DEFAULT true,
+    sort_order INT DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE education_levels (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    education_system_id UUID NOT NULL REFERENCES education_systems(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    level_type TEXT NOT NULL CHECK (level_type IN (
+        'pre_primary', 'primary', 'middle', 'secondary',
+        'senior_secondary', 'diploma', 'undergraduate',
+        'postgraduate', 'doctoral', 'competitive_exam', 'certificate'
+    )),
+    age_range TEXT,
+    duration_years INT,
+    sort_order INT DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Layer 3: Course Structure
+CREATE TABLE grades (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    education_level_id UUID NOT NULL REFERENCES education_levels(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    display_name TEXT,
+    numeric_value INT,
+    sort_order INT DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE streams (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    grade_id UUID NOT NULL REFERENCES grades(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT,
+    is_default BOOLEAN DEFAULT false,
+    sort_order INT DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE subjects (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    stream_id UUID NOT NULL REFERENCES streams(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    medium TEXT NOT NULL DEFAULT 'English',
+    medium_code TEXT NOT NULL DEFAULT 'en',
+    code TEXT,
+    icon_name TEXT,
+    accent_color TEXT,
+    chapter_count INT DEFAULT 0,
+    description TEXT,
+    sort_order INT DEFAULT 0,
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(stream_id, name, medium_code)
+);
+
+-- Layer 4: Content Hierarchy
+CREATE TABLE chapters (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    subject_id UUID NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    chapter_number INT,
+    description TEXT,
+    sort_order INT DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE topics (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    chapter_id UUID NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT,
+    sort_order INT DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE subtopics (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    topic_id UUID NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT,
+    sort_order INT DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Layer 5: User Binding
+CREATE TABLE user_curriculum_enrollments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    education_system_id UUID NOT NULL REFERENCES education_systems(id),
+    grade_id UUID NOT NULL REFERENCES grades(id),
+    stream_id UUID REFERENCES streams(id),
+    medium_code TEXT NOT NULL DEFAULT 'en',  -- User's chosen medium/language
+    is_active BOOLEAN DEFAULT true,
+    enrolled_at TIMESTAMPTZ DEFAULT now(),
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(user_id, education_system_id, grade_id, stream_id, medium_code)
+);
+
+-- ============================================================
+-- INDEXES
+-- ============================================================
+
+-- Fast lookup: country → education systems
+CREATE INDEX idx_education_systems_country ON education_systems(country_id) WHERE is_active = true;
+CREATE INDEX idx_education_systems_type ON education_systems(system_type);
+
+-- Fast lookup: system → levels → grades → streams → subjects
+CREATE INDEX idx_education_levels_system ON education_levels(education_system_id);
+CREATE INDEX idx_grades_level ON grades(education_level_id);
+CREATE INDEX idx_streams_grade ON streams(grade_id);
+CREATE INDEX idx_subjects_stream ON subjects(stream_id) WHERE is_active = true;
+
+-- Fast content tree traversal
+CREATE INDEX idx_chapters_subject ON chapters(subject_id);
+CREATE INDEX idx_topics_chapter ON topics(chapter_id);
+CREATE INDEX idx_subtopics_topic ON subtopics(topic_id);
+
+-- User enrollment lookups
+CREATE INDEX idx_enrollments_user ON user_curriculum_enrollments(user_id) WHERE is_active = true;
+CREATE INDEX idx_enrollments_system ON user_curriculum_enrollments(education_system_id);
+
+-- ============================================================
+-- ROW LEVEL SECURITY (RLS)
+-- ============================================================
+
+-- Syllabus data is PUBLIC READ (no auth needed)
+ALTER TABLE regions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE countries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE education_systems ENABLE ROW LEVEL SECURITY;
+ALTER TABLE education_levels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE grades ENABLE ROW LEVEL SECURITY;
+ALTER TABLE streams ENABLE ROW LEVEL SECURITY;
+ALTER TABLE subjects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE chapters ENABLE ROW LEVEL SECURITY;
+ALTER TABLE topics ENABLE ROW LEVEL SECURITY;
+ALTER TABLE subtopics ENABLE ROW LEVEL SECURITY;
+
+-- Public read for all syllabus tables
+CREATE POLICY "Public read" ON regions FOR SELECT USING (true);
+CREATE POLICY "Public read" ON countries FOR SELECT USING (true);
+CREATE POLICY "Public read" ON education_systems FOR SELECT USING (true);
+CREATE POLICY "Public read" ON education_levels FOR SELECT USING (true);
+CREATE POLICY "Public read" ON grades FOR SELECT USING (true);
+CREATE POLICY "Public read" ON streams FOR SELECT USING (true);
+CREATE POLICY "Public read" ON subjects FOR SELECT USING (true);
+CREATE POLICY "Public read" ON chapters FOR SELECT USING (true);
+CREATE POLICY "Public read" ON topics FOR SELECT USING (true);
+CREATE POLICY "Public read" ON subtopics FOR SELECT USING (true);
+
+-- User enrollments: users can only see/modify their own
+ALTER TABLE user_curriculum_enrollments ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users view own enrollments"
+    ON user_curriculum_enrollments FOR SELECT
+    USING (auth.uid() = user_id);
+CREATE POLICY "Users create own enrollments"
+    ON user_curriculum_enrollments FOR INSERT
+    WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users update own enrollments"
+    ON user_curriculum_enrollments FOR UPDATE
+    USING (auth.uid() = user_id);
+```
+
+---
+
+## API Endpoints Design
+
+### Onboarding / Syllabus Selection Flow
+
+```
+GET  /api/syllabus/regions                                    → List continents
+GET  /api/syllabus/countries?region_id=...                    → List countries in region
+GET  /api/syllabus/systems?country_id=...                     → List boards/curricula
+GET  /api/syllabus/levels?system_id=...                       → List education levels
+GET  /api/syllabus/grades?level_id=...                        → List grades/classes
+GET  /api/syllabus/streams?grade_id=...                       → List streams (if any)
+GET  /api/syllabus/mediums?stream_id=...                      → List available mediums (NEW)
+```
+
+> [!NOTE]
+> The `mediums` endpoint returns distinct `(medium, medium_code)` pairs from `subjects` for a given stream. This shows only mediums that actually have content seeded — not a hardcoded list.
+
+### Syllabus Content (Syllabus Tab)
+
+```
+GET  /api/syllabus/subjects?stream_id=...&medium_code=...     → Subjects filtered by medium
+GET  /api/syllabus/chapters?subject_id=...                    → Chapters in subject
+GET  /api/syllabus/topics?chapter_id=...                      → Topics in chapter
+GET  /api/syllabus/subtopics?topic_id=...                     → Subtopics in topic
+```
+
+### User Enrollment
+
+```
+POST   /api/syllabus/enroll                              → Enroll user in curriculum (now includes medium_code)
+GET    /api/syllabus/my-enrollment                       → Get user's current enrollment
+PATCH  /api/syllabus/my-enrollment                       → Change grade/stream/medium
+```
+
+### Full Syllabus Tree (pre-load for offline)
+
+```
+GET  /api/syllabus/tree?stream_id=...                    → Full subject→chapter→topic→subtopic tree
+```
+
+---
+
+## Query Patterns
+
+### 1. Load Syllabus Tab (most frequent query)
+
+```sql
+-- Given a user, get their subject cards (medium-aware)
+SELECT s.*
+FROM subjects s
+JOIN streams st ON s.stream_id = st.id
+JOIN user_curriculum_enrollments uce ON uce.stream_id = st.id
+WHERE uce.user_id = $1
+  AND uce.is_active = true
+  AND s.medium_code = uce.medium_code   -- ← medium filter
+  AND s.is_active = true
+ORDER BY s.sort_order;
+```
+
+### 2. Load Chapter List for a Subject
+
+```sql
+SELECT * FROM chapters
+WHERE subject_id = $1
+ORDER BY sort_order;
+```
+
+### 3. Load Full Topic Tree for a Chapter
+
+```sql
+SELECT
+    t.id AS topic_id, t.name AS topic_name,
+    st.id AS subtopic_id, st.name AS subtopic_name
+FROM topics t
+LEFT JOIN subtopics st ON st.topic_id = t.id
+WHERE t.chapter_id = $1
+ORDER BY t.sort_order, st.sort_order;
+```
+
+### 4. Onboarding Cascade (Board → Level → Grade → Stream → Medium)
+
+```sql
+-- Step 1: Get all boards for India (user selects country)
+SELECT id, short_name, name, system_type
+FROM education_systems
+WHERE country_id = (SELECT id FROM countries WHERE iso_code = 'IN')
+  AND is_active = true
+ORDER BY sort_order;
+
+-- Step 2: User selects CBSE → get levels
+SELECT id, name, level_type FROM education_levels
+WHERE education_system_id = $1 ORDER BY sort_order;
+
+-- Step 3: User selects "Secondary" → get grades
+SELECT id, name, display_name FROM grades
+WHERE education_level_id = $1 ORDER BY sort_order;
+
+-- Step 4: User selects "Class 10" → get streams
+SELECT id, name, is_default FROM streams
+WHERE grade_id = $1 ORDER BY sort_order;
+-- (For Class 10, returns single "General" stream)
+
+-- Step 5 (NEW): User selects stream → get available mediums
+SELECT DISTINCT medium, medium_code
+FROM subjects
+WHERE stream_id = $1
+  AND is_active = true
+ORDER BY medium;
+-- Maharashtra Board returns: English/en, Hindi/hi, Urdu/ur, Gujarati/gu, Kannada/kn ...
+-- CBSE may return many of India's 22 official languages
+```
+
+---
+
+## Data Insertion Example
+
+### Seed: India → CBSE → Class 10 → Mathematics
+
+```sql
+-- 1. Region
+INSERT INTO regions (name, code) VALUES ('Asia', 'AS');
+
+-- 2. Country
+INSERT INTO countries (region_id, name, iso_code, flag_emoji)
+VALUES ((SELECT id FROM regions WHERE code = 'AS'), 'India', 'IN', '🇮🇳');
+
+-- 3. Education System (Board)
+INSERT INTO education_systems (country_id, name, short_name, system_type)
+VALUES (
+    (SELECT id FROM countries WHERE iso_code = 'IN'),
+    'Central Board of Secondary Education', 'CBSE', 'national_board'
+);
+
+-- 4. Education Level
+INSERT INTO education_levels (education_system_id, name, level_type, age_range)
+VALUES (
+    (SELECT id FROM education_systems WHERE short_name = 'CBSE'),
+    'Secondary', 'secondary', '14-16'
+);
+
+-- 5. Grade
+INSERT INTO grades (education_level_id, name, display_name, numeric_value)
+VALUES (
+    (SELECT id FROM education_levels WHERE name = 'Secondary'
+     AND education_system_id = (SELECT id FROM education_systems WHERE short_name = 'CBSE')),
+    'Class 10', '10th Standard', 10
+);
+
+-- 6. Stream (General for Class 10)
+INSERT INTO streams (grade_id, name, is_default)
+VALUES (
+    (SELECT id FROM grades WHERE name = 'Class 10'
+     AND education_level_id = (SELECT id FROM education_levels WHERE name = 'Secondary'
+       AND education_system_id = (SELECT id FROM education_systems WHERE short_name = 'CBSE'))),
+    'General', true
+);
+
+-- 7. Subject (one row per medium; seed English first, add other mediums as content is ready)
+INSERT INTO subjects (stream_id, name, medium, medium_code, code, icon_name, accent_color, chapter_count, sort_order)
+VALUES
+    ('<stream_uuid>', 'Mathematics', 'English', 'en', 'MATH', 'calculator-outline', '#3b82f6', 15, 1),
+    ('<stream_uuid>', 'Mathematics', 'Hindi',   'hi', 'MATH', 'calculator-outline', '#3b82f6', 15, 1),
+    ('<stream_uuid>', 'Mathematics', 'Urdu',    'ur', 'MATH', 'calculator-outline', '#3b82f6', 15, 1);
+-- Add more mediums (Marathi/mr, Gujarati/gu, Tamil/ta, etc.) as textbook data is seeded
+
+-- 8. Chapter
+INSERT INTO chapters (subject_id, name, chapter_number, description, sort_order)
+VALUES ('<subject_uuid>', 'Real Numbers', 1,
+    'Euclid''s Division Lemma, Fundamental Theorem of Arithmetic', 1);
+
+-- 9. Topic
+INSERT INTO topics (chapter_id, name, sort_order)
+VALUES ('<chapter_uuid>', 'Euclid''s Division Lemma', 1);
+
+-- 10. Subtopic
+INSERT INTO subtopics (topic_id, name, sort_order)
+VALUES ('<topic_uuid>', 'Algorithm to find HCF using Euclid''s Division Lemma', 1);
+```
+
+---
+
+## Migration from Current System
+
+### Current State (in `user_profiles`)
+```
+education_category: "school"
+class_level: "10th"
+stream: null
+```
+
+### Migration Plan
+1. Create all syllabus tables in Supabase
+2. Seed initial data (CBSE Classes 1–12, ICSE Class 10, Maharashtra Board Class 10) — seed **English medium first** for all boards
+3. Create `user_curriculum_enrollments` table
+4. Write a one-time migration script that maps existing `education_category` + `class_level` + `stream` to new enrollment records — default `medium_code = 'en'` for all existing users
+5. Update onboarding flow to use cascading selectors (Country → Board → Level → Grade → Stream → **Medium**)
+6. Update [SyllabusTab.tsx](file:///e:/Sarthi/SarthiAI/src/screens/tabs/SyllabusTab.tsx) to fetch from API instead of hardcoded [syllabusData.ts](file:///e:/Sarthi/SarthiAI/src/data/syllabusData.ts)
+
+---
+
+## Phased Data Insertion Rollout
+
+| Phase | Priority | Content to Insert |
+|-------|----------|-------------------|
+| **Phase 1** | 🟢 Launch | CBSE Classes 6–12 (all subjects, full chapter/topic/subtopic) |
+| **Phase 2** | 🟢 Launch | ICSE Classes 6–12 |
+| **Phase 3** | 🟡 Month 1 | Maharashtra, Karnataka, Tamil Nadu, UP State Boards (Class 10, 12) |
+| **Phase 4** | 🟡 Month 2 | Remaining major state boards (10 more) |
+| **Phase 5** | 🔵 Month 3 | B.Tech CSE (Semesters 1–8), B.Sc, B.Com top subjects |
+| **Phase 6** | 🔵 Month 4 | Competitive exams (JEE, NEET, CAT, UPSC) |
+| **Phase 7** | ⚪ Month 5+ | International (IB, IGCSE, AP, US K-12, UK GCSE/A-Level) |
+
+> [!CAUTION]
+> **Data Quality Over Quantity**: It's better to have 5 boards with complete, accurate chapter→topic→subtopic data than 50 boards with only board names. Each board needs textbook-level accuracy for the syllabus hierarchy.
